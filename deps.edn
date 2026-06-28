@@ -1,0 +1,12 @@
+{:paths ["src"]
+ ;; Zero-third-party-dep, all-`.cljc`: the IStore port + the pure LocalStore +
+ ;; the KotobaseStore (which talks to kotobase.net through a HOST-INJECTED `xrpc`
+ ;; fn — no HTTP client baked in, so it runs unchanged on JVM / cljs / a Cloudflare
+ ;; Worker / kotoba-WASM). The injecting host supplies the transport (`fetch`).
+ :deps {}
+ :aliases
+ {:test {:extra-paths ["test"]
+         :extra-deps {io.github.cognitect-labs/test-runner
+                      {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
+         :main-opts ["-m" "cognitect.test-runner"]
+         :exec-fn cognitect.test-runner.api/test}}}
