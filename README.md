@@ -1,5 +1,7 @@
 # kotobase-clj
 
+[![CI](https://github.com/kotoba-lang/kotobase/actions/workflows/ci.yml/badge.svg)](https://github.com/kotoba-lang/kotobase/actions/workflows/ci.yml)
+
 The **external-storage port** for com-junkawasaki apps — one `IStore` seam that lets an
 app run **standalone (OSS)** on a local backend or, when connected to the cloud, persist
 to **kotobase.net** (the kotoba PDS) *without the app code changing*. Zero-dependency,
