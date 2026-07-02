@@ -55,5 +55,5 @@ Workers) inject a `fetch`-based `xrpc` and serve the app API straight off the
 `:kotobase` store; the desktop/CLI apps use `:local`.
 
 ```bash
-clojure -X:test     # LocalStore + KotobaseStore both satisfy the IStore contract
+clojure -M:test     # LocalStore + KotobaseStore both satisfy the IStore contract
 ```
