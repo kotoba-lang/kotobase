@@ -1,6 +1,25 @@
-# kotobase-clj
+# kotobase
 
 [![CI](https://github.com/kotoba-lang/kotobase/actions/workflows/ci.yml/badge.svg)](https://github.com/kotoba-lang/kotobase/actions/workflows/ci.yml)
+
+**The datom database of the kotoba stack — the _Datomic_ to kotoba's _Clojure_**
+(ADR-2607032500). kotobase persists, indexes, Datalog-queries, and
+time-versions the datom model that the [**`kotoba`**](https://github.com/kotoba-lang/kotoba)
+language defines (`kotoba.kgraph`'s `[e a v]`), and is built _on_ kotoba — it
+depends on the language, never the reverse. Like Datomic on Clojure: the db
+value is kotoba data, the query is kotoba data.
+
+"kotobase" is the umbrella over the datom-plane repos (bottom-up): content
+addressing (`ipld`/`multiformats`/`dag-cbor`) → content-addressed storage
+(`prolly-tree`) → immutable commit chain / time (`commit-dag`) → 4 covering
+indexes (`quad-store`) → Datalog query (`kqe`) → transact/datoms/q/pull
+(`kotobase-engine`) → CACAO client (`kotobase-client`) → edge runtime
+(`kotobase-cljc-worker` = the kotobase.net PDS). **This repo (`kotobase-clj`) is
+kotobase's client seam** — the `IStore` port below.
+
+---
+
+## `IStore` — the storage seam
 
 The **external-storage port** for com-junkawasaki apps — one `IStore` seam that lets an
 app run **standalone (OSS)** on a local backend or, when connected to the cloud, persist
