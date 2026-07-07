@@ -17,6 +17,15 @@ indexes (`quad-store`) → Datalog query (`kqe`) → transact/datoms/q/pull
 (`kotobase-cljc-worker` = the kotobase.net PDS). **This repo (`kotobase-clj`) is
 kotobase's client seam** — the `IStore` port below.
 
+**Disambiguation (ADR-2607050900):** this repo, [`kotobase-client`](https://github.com/kotoba-lang/kotobase-client),
+and [`kotoba-client`](https://github.com/kotoba-lang/kotoba-client) are three
+distinct repos with no functional overlap, despite the similar names:
+`kotobase-client` is the CACAO-authed ClojureScript client for the
+`kotobase.net` tenant Datom plane specifically (linked above in the pipeline
+diagram); `kotoba-client` is a separate, *generic, non-CACAO* CID-verified
+block ingest/hydrate client over kotoba's content graph, consumed by `p2p`.
+Neither previously cross-referenced the other two by name alone.
+
 ---
 
 ## `IStore` — the storage seam
