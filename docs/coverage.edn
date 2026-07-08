@@ -1,5 +1,5 @@
 {:kotobase.coverage/version 1
- :maturity :m4
+ :maturity :m6
  ;; M0-M6 template borrowed from kotoba-lang/kotoba-lang's docs/lang/coverage.edn,
  ;; adapted for this repo's shape: a single Clojure protocol (IStore) verified
  ;; by one shared contract test run against two backends, not a capability/
@@ -34,19 +34,20 @@
    :evidence [".github/workflows/ci.yml (clojure -M:test on JDK 17 + 21)"]}
   {:stage :m5
    :name "external-implementation-suite"
-   :status :unconfirmed
-   :note "README's Consumers section names cloud-murakumo and
-          cloud-manimani, but both actually depend on
-          io.github.com-junkawasaki/kotobase-clj
-          (orgs/com-junkawasaki/kotobase-clj) -- a DIFFERENT repo with an
-          identical file/namespace layout (kotobase.store/local/kotobase,
-          the same contract test), not this repo. kotobase-clj's own
-          deps.edn comment says it has since been transferred to a
-          gftdcojp/ org. Whether that repo is a stale fork, a pre-rename
-          copy, or the actual currently-consumed artifact is unresolved.
-          Do not claim M5 for kotoba-lang/kotobase until a real dependent
-          names THIS repo -- flagged as a follow-up, not fixed here."
-   :evidence []}
+   :note "Resolved 2026-07-08: io.github.com-junkawasaki/kotobase-clj is
+          not a different repo -- it is THIS repo under its pre-rename
+          GitHub coordinates (com-junkawasaki/kotobase-clj was renamed +
+          transferred to kotoba-lang/kotobase, ADR-2606302300; GitHub's
+          redirect on the old owner/name is why a deps.edn pointing at
+          the old coordinates kept resolving). gftdcojp/cloud-manimani
+          already depended on kotoba-lang/kotobase directly (correct);
+          gftdcojp/local-murakumo (formerly cloud-murakumo) still had a
+          stale :local/root pointing at the west-unregistered
+          orgs/com-junkawasaki/kotobase-clj path and has been fixed to
+          depend on kotoba-lang/kotobase (local-murakumo@da16340),
+          verified via `clojure -M:test` (37 tests / 258 assertions)."
+   :evidence ["orgs/gftdcojp/cloud-manimani/deps.edn: io.github.kotoba-lang/kotobase"
+              "orgs/gftdcojp/local-murakumo/deps.edn: io.github.kotoba-lang/kotobase"]}
   {:stage :m6
    :name "compatibility-policy"
    :evidence ["docs/versioning.md"]}]}

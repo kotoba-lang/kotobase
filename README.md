@@ -89,8 +89,9 @@ live kotobase.net backend is correct iff it passes the same checks
 
 ## Consumers
 
-The cloud API workers [cloud-murakumo](https://github.com/com-junkawasaki/cloud-murakumo)
-and [cloud-manimani](https://github.com/com-junkawasaki/cloud-manimani) (cljs Cloudflare
+The cloud API workers [local-murakumo](https://github.com/gftdcojp/local-murakumo)
+(formerly `cloud-murakumo`, renamed 2026-07-04) and
+[cloud-manimani](https://github.com/gftdcojp/cloud-manimani) (cljs Cloudflare
 Workers) inject a `fetch`-based `xrpc` and serve the app API straight off the
 `:kotobase` store; the desktop/CLI apps use `:local`.
 
