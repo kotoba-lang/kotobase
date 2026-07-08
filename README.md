@@ -94,6 +94,17 @@ and [cloud-manimani](https://github.com/com-junkawasaki/cloud-manimani) (cljs Cl
 Workers) inject a `fetch`-based `xrpc` and serve the app API straight off the
 `:kotobase` store; the desktop/CLI apps use `:local`.
 
+> **Naming note (2026-07-08):** as of this writing, both cloud-murakumo's and
+> cloud-manimani's `deps.edn` actually depend on
+> `io.github.com-junkawasaki/kotobase-clj` (a separate repo,
+> `orgs/com-junkawasaki/kotobase-clj`, with an identical
+> `kotobase.store`/`local`/`kotobase` file layout and contract test) rather
+> than on this repo by name. Whether that is a pre-rename copy, a fork, or
+> the currently-authoritative artifact is unresolved -- see
+> `docs/coverage.edn`'s M5 note. Until a real dependent names
+> `kotoba-lang/kotobase` specifically, treat the description above as the
+> intended architecture, not a confirmed dependency graph.
+
 ```bash
 clojure -M:test     # LocalStore + KotobaseStore both satisfy the IStore contract
 ```
