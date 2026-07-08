@@ -9,6 +9,18 @@ language defines (`kotoba.kgraph`'s `[e a v]`), and is built _on_ kotoba — it
 depends on the language, never the reverse. Like Datomic on Clojure: the db
 value is kotoba data, the query is kotoba data.
 
+**Datomic reimagined for the distributed web.** Where Datomic centralizes on
+a single transactor peer over SQL/DynamoDB storage, kotobase is
+content-addressed and network-native from the ground up: facts are
+blake3/CIDv1 blocks (`ipld`/`multiformats`/`dag-cbor`), the index structure is
+a content-addressed Prolly Tree instead of a B-tree, history is an immutable
+commit DAG rather than a single log, and the "peer" is an edge runtime
+(`kotobase-cljc-worker` / kotobase.net) reachable over CACAO-authenticated
+HTTP rather than a JVM process with a direct storage connection. Same
+datom/EAVT/Datalog model as Datomic, but the storage and replication substrate
+is the distributed web (IPFS-shaped content addressing) instead of a
+single-writer database.
+
 "kotobase" is the umbrella over the datom-plane repos (bottom-up): content
 addressing (`ipld`/`multiformats`/`dag-cbor`) → content-addressed storage
 (`prolly-tree`) → immutable commit chain / time (`commit-dag`) → 4 covering
