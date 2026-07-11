@@ -40,6 +40,51 @@ Neither previously cross-referenced the other two by name alone.
 
 ---
 
+## Data model — an incidence merkle graph
+
+kotobase does not treat IPLD as a generic tree/DAG encoding — every IPLD
+block is an **incidence structure**, in the sense of `com-junkawasaki/inc`'s
+Theory of Incidence: a relation `i` whose **boundary** `∂(i)` is a finite
+list of labelled, oriented **endpoints** (`Endpoint = {i, role, sign, mult}`,
+`Boundary = List Endpoint`). Content-addressing hashes that boundary into the
+node's own identity, so the incidence structure *is* the Merkle graph, not a
+separate encoding layered on top of one:
+
+- **endpoint = IPLD link.** Every `ipld/link` (the `ipld` repo's tag-42
+  CID link) occupies a labelled position in its parent block — a map key
+  (`"children"`, `"prev"`, `"index-roots/spo"`) or array index — and points
+  one direction, parent → child. That is exactly an `Endpoint`: `role` is
+  the label, `sign` is the orientation (always outbound in an IPLD DAG —
+  links never point back up), `mult` is how many times that role repeats
+  (a prolly-tree internal node holds many `children` endpoints under one
+  role).
+- **boundary = the block's link set.** `ipld/links` decodes a block and
+  returns exactly `∂(i)` — the generic, schema-free walk every hydrate/GC
+  loop in `kotoba-client` relies on.
+- **the CID *is* the relation's identity.** A block encodes as canonical
+  DAG-CBOR, so `CID(i) = hash(content(i))`, and `content(i)` includes `∂(i)`
+  verbatim: two nodes are the same relation iff their boundaries (labels,
+  orientation, multiplicities, and the CIDs they point at) are identical.
+  Mutating one endpoint changes the owning node's CID, which changes every
+  ancestor's CID up to the head — append-only, tamper-evident, structurally
+  shareable.
+
+Every layer in the umbrella pipeline above is this same incidence-merkle
+graph at a different granularity:
+
+| layer | the incidence relation | its labelled endpoints |
+|---|---|---|
+| `prolly-tree` node | one tree node | `children[i]` — ordered, repeatable |
+| `commit-dag` commit | one commit | `prev`, `index-roots/{spo,pso,pos,ocp}` |
+| `quad-store` commit | the 4-index snapshot | one endpoint per covering index |
+| a datom `[e a v]` | the relation itself | `e`, `a`, `v` — 3 labelled endpoints |
+
+Datoms are the base case, not an exception: `[e a v]` (`kotoba.kgraph`'s EAVT
+model) is already a minimal incidence relation with three named endpoints, so
+kotobase's Datalog-visible datom shape and its IPLD storage shape share one
+vocabulary top to bottom. A *tree* — binary, unlabelled parent/child — is
+just the special case of this graph with exactly one anonymous endpoint role.
+
 ## `IStore` — the storage seam
 
 The **external-storage port** for com-junkawasaki apps — one `IStore` seam that lets an
