@@ -167,6 +167,17 @@ CID possession is never authority. Package signatures/admission, CACAO,
 capability intersection, local policy, and Wasm host confinement remain
 separate mandatory gates.
 
+### Promise/async hosts
+
+`kotobase.code-graph-async/run!` makes the complete synchronous code-graph API
+usable over a Promise-returning IStore. It awaits all code collections and
+streams into a LocalStore snapshot, invokes any existing code-graph operation,
+then flushes only changed documents and new events. Appends are flushed in
+program order and the remote sequencer remains authoritative for cursor values.
+Use `promise-runtime` in ClojureScript; other completion models can inject the
+same `resolve`/`then`/`all` algebra. CI compiles and executes this path under
+Node as real ClojureScript rather than relying only on the synchronous JVM test.
+
 ## Consumers
 
 The cloud API workers [local-murakumo](https://github.com/gftdcojp/local-murakumo)
@@ -175,17 +186,11 @@ The cloud API workers [local-murakumo](https://github.com/gftdcojp/local-murakum
 Workers) inject a `fetch`-based `xrpc` and serve the app API straight off the
 `:kotobase` store; the desktop/CLI apps use `:local`.
 
-> **Naming note (2026-07-08):** as of this writing, both cloud-murakumo's and
-> cloud-manimani's `deps.edn` actually depend on
-> `io.github.com-junkawasaki/kotobase-clj` (a separate repo,
-> `orgs/com-junkawasaki/kotobase-clj`, with an identical
-> `kotobase.store`/`local`/`kotobase` file layout and contract test) rather
-> than on this repo by name. Whether that is a pre-rename copy, a fork, or
-> the currently-authoritative artifact is unresolved -- see
-> `docs/coverage.edn`'s M5 note. Until a real dependent names
-> `kotoba-lang/kotobase` specifically, treat the description above as the
-> intended architecture, not a confirmed dependency graph.
+> **Naming note:** the old `io.github.com-junkawasaki/kotobase-clj` coordinate
+> redirects to this renamed repository. Current west-managed consumers use
+> `io.github.kotoba-lang/kotobase`; see `docs/coverage.edn`'s resolved M5 note.
 
 ```bash
 clojure -M:test     # LocalStore + KotobaseStore both satisfy the IStore contract
+clojure -M:cljs-test -m cljs.main ... # compile/run Promise IStore code graph
 ```

@@ -44,5 +44,10 @@ jobs:
       - name: Run tests
         run: clojure -M:test
 
+      - name: Compile and run Promise IStore CLJS test
+        run: |
+          clojure -M:cljs-test -m cljs.main -co '{:target :nodejs :output-to "target/async-node.js" :optimizations :none}' -c kotobase.code-graph-async-node
+          node target/async-node.js
+
       - name: Lint
         run: clojure -M:lint
