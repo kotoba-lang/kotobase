@@ -16,7 +16,9 @@
       :get    (st/-get backend (:coll params) (:key params))
       :list   (st/-list backend (:coll params))
       :append (st/-append backend (:stream params) (:event params))
-      :read   (st/-read backend (:stream params) (:since params)))))
+      :read   (st/-read backend (:stream params) (:since params))
+      :snapshot (st/-snapshot backend params)
+      :transact (st/-transact backend params))))
 
 (deftest local-store-satisfies-contract
   (testing "the in-process LocalStore is a correct IStore"
@@ -41,3 +43,55 @@
 (deftest xrpc-path-mapping
   (testing "store methods map to kotoba XRPC paths"
     (is (= "net.kotobase.store.append" (kb/xrpc-method->path :append)))))
+
+(deftest transactional-xrpc-is-explicitly-negotiated
+  (let [backend (local/local-store)
+        legacy (kb/kotobase-store (mock-xrpc backend))
+        transactional (kb/kotobase-store (mock-xrpc backend)
+                                          {:transactional? true})]
+    (is (not (st/transactional-store? legacy)))
+    (is (st/transactional-store? transactional))
+    (is (= 0 (:revision (st/-snapshot transactional
+                                        {:collections [] :streams []}))))))
+
+(deftest transactional-store-is-atomic-idempotent-and-conflict-aware
+  (let [s (local/local-store)
+        request {:tx-id "tx-1" :expected-revision 0
+                 :puts [["docs" "a" 1] ["docs" "b" 2]]
+                 :deletes [] :appends [["events" {:op :commit}]]}
+        receipt (st/-transact s request)]
+    (is (= 1 (:revision receipt)))
+    (is (= 1 (get-in (st/-snapshot s {:collections ["docs"]
+                                      :streams ["events"]})
+                     [:docs "docs" "a"])))
+    (is (= receipt (st/-transact s request)) "same tx-id is idempotent")
+    (is (= 1 (count (st/-read s "events" 0))) "replay does not append twice")
+    (is (thrown-with-msg?
+         #?(:clj clojure.lang.ExceptionInfo :cljs js/Error) #"revision conflict"
+         (st/-transact s {:tx-id "tx-2" :expected-revision 0
+                          :puts [["docs" "c" 3]] :deletes [] :appends []})))
+    (is (nil? (st/-get s "docs" "c")) "conflict applies nothing")))
+
+#?(:clj
+   (deftest one-revision-allows-exactly-one-concurrent-commit
+     (let [s (local/local-store)
+           attempts (doall
+                     (for [n (range 32)]
+                       (future
+                         (try
+                           (st/-transact
+                            s {:tx-id (str "concurrent-" n)
+                               :expected-revision 0
+                               :puts [["winner" "id" n]]
+                               :deletes [] :appends [["events" {:n n}]]})
+                           (catch clojure.lang.ExceptionInfo error
+                             (ex-data error))))))
+           results (mapv deref attempts)
+           commits (filter :revision results)
+           conflicts (filter #(= :kotobase.store/revision-conflict (:type %))
+                             results)]
+       (is (= 1 (count commits)))
+       (is (= 31 (count conflicts)))
+       (is (= 1 (count (st/-read s "events" 0))))
+       (is (= 1 (:revision (st/-snapshot s {:collections ["winner"]
+                                            :streams ["events"]})))))))

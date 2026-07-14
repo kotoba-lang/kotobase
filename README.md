@@ -106,6 +106,17 @@ kotobase.store/IStore           put · get · list · append · read(since)
                  which itself backs onto external object storage (git-annex/B2, S3)
 ```
 
+Backends that can provide strong commits additionally implement
+`ITransactionalStore`: `-snapshot` returns all requested collections and
+streams at one tenant revision, and `-transact` compares that revision before
+atomically applying document mutations and ordered appends. Transaction ids are
+idempotent. `LocalStore` is the reference implementation. Remote use is an
+explicit capability negotiation so older servers remain compatible:
+
+```clojure
+(kb/kotobase-store xrpc {:transactional? true})
+```
+
 Two shapes of state cover both apps:
 - **docs** — keyed last-writer-wins (`put`/`get`/`list`): a node's latest Heartbeat, a
   triage rule, a config fact.
@@ -170,10 +181,11 @@ separate mandatory gates.
 ### Promise/async hosts
 
 `kotobase.code-graph-async/run!` makes the complete synchronous code-graph API
-usable over a Promise-returning IStore. It awaits all code collections and
-streams into a LocalStore snapshot, invokes any existing code-graph operation,
-then flushes only changed documents and new events. Appends are flushed in
-program order and the remote sequencer remains authoritative for cursor values.
+usable over a Promise-returning IStore. For `ITransactionalStore`, it reads one
+revisioned snapshot and flushes all changed documents and new events with one
+revision-checked transaction, preventing fractured code-graph commits. Legacy
+IStore backends retain the collection-by-collection compatibility path, with
+appends flushed in program order.
 Use `promise-runtime` in ClojureScript; other completion models can inject the
 same `resolve`/`then`/`all` algebra. CI compiles and executes this path under
 Node as real ClojureScript rather than relying only on the synchronous JVM test.

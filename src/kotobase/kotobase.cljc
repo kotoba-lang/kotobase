@@ -22,11 +22,25 @@
   (-append [_ stream event] (xrpc :append {:stream stream :event event}))
   (-read   [_ stream since] (xrpc :read   {:stream stream :since (or since 0)})))
 
+(deftype TransactionalKotobaseStore [xrpc]
+  st/IStore
+  (-put  [_ coll k v] (xrpc :put  {:coll coll :key k :val v}))
+  (-get  [_ coll k]   (xrpc :get  {:coll coll :key k}))
+  (-list [_ coll]     (xrpc :list {:coll coll}))
+  (-append [_ stream event] (xrpc :append {:stream stream :event event}))
+  (-read [_ stream since] (xrpc :read {:stream stream :since (or since 0)}))
+  st/ITransactionalStore
+  (-snapshot [_ scope] (xrpc :snapshot scope))
+  (-transact [_ request] (xrpc :transact request)))
+
 (defn kotobase-store
   "A store backed by kotobase.net through the injected `xrpc` fn
   `(fn [method params] -> result)`."
-  [xrpc]
-  (->KotobaseStore xrpc))
+  ([xrpc] (->KotobaseStore xrpc))
+  ([xrpc {:keys [transactional?]}]
+   (if transactional?
+     (->TransactionalKotobaseStore xrpc)
+     (->KotobaseStore xrpc))))
 
 (defn xrpc-method->path
   "kotoba XRPC URL path for a store `method` (the worker's `fetch` target under

@@ -15,7 +15,12 @@
   (-append [_ stream event]
     (js/Promise.resolve (store/-append delegate stream event)))
   (-read [_ stream since]
-    (js/Promise.resolve (store/-read delegate stream since))))
+    (js/Promise.resolve (store/-read delegate stream since)))
+  store/ITransactionalStore
+  (-snapshot [_ scope]
+    (js/Promise.resolve (store/-snapshot delegate scope)))
+  (-transact [_ request]
+    (js/Promise.resolve (store/-transact delegate request))))
 
 (defn fail! [error]
   (js/console.error error)
