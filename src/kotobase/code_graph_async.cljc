@@ -59,18 +59,27 @@
   "Return an async value resolving to a LocalStore snapshot of every code-graph
   collection and stream."
   [runtime remote]
-  (then* runtime
-         (all* runtime
-               (concat (mapv #(load-collection runtime remote %) collections)
-                       (mapv #(load-stream runtime remote %) streams)))
-         (fn [parts]
-           (let [part-map (into {} parts)
-                 stream-map (select-keys part-map streams)
-                 max-seq (reduce max 0 (map :seq (mapcat val stream-map)))]
+  (if (store/transactional-store? remote)
+    (then* runtime
+           (resolve* runtime
+                     (store/-snapshot remote {:collections collections
+                                              :streams streams}))
+           (fn [{:keys [revision docs streams]}]
              (local/local-store
-              {:docs (select-keys part-map collections)
-               :streams stream-map
-               :seq max-seq})))))
+              {:docs docs :streams streams :revision revision
+               :seq (reduce max 0 (map :seq (mapcat val streams)))})))
+    (then* runtime
+           (all* runtime
+                 (concat (mapv #(load-collection runtime remote %) collections)
+                         (mapv #(load-stream runtime remote %) streams)))
+           (fn [parts]
+             (let [part-map (into {} parts)
+                   stream-map (select-keys part-map streams)
+                   max-seq (reduce max 0 (map :seq (mapcat val stream-map)))]
+               (local/local-store
+                {:docs (select-keys part-map collections)
+                 :streams stream-map
+                 :seq max-seq}))))))
 
 (defn- changed-docs [before after]
   (for [coll collections
@@ -87,7 +96,16 @@
    streams))
 
 (defn- flush! [runtime remote before after]
-  (then* runtime
+  (if (store/transactional-store? remote)
+    (resolve* runtime
+              (store/-transact
+               remote
+               {:tx-id (str (random-uuid))
+                :expected-revision (:revision before)
+                :puts (vec (changed-docs before after))
+                :deletes []
+                :appends (vec (appended-events before after))}))
+    (then* runtime
          (all* runtime
                (mapv (fn [[coll key value]]
                        (resolve* runtime (store/-put remote coll key value)))
@@ -102,7 +120,7 @@
                      (fn [_] (resolve* runtime
                                       (store/-append remote stream event)))))
             (resolve* runtime nil)
-            (appended-events before after)))))
+            (appended-events before after))))))
 
 (defn run!
   "Run `(operation local-store)` after asynchronously materializing REMOTE,
