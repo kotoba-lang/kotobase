@@ -132,6 +132,41 @@ The contract suite asserts `KotobaseStore ≡ LocalStore` over a faithful transp
 live kotobase.net backend is correct iff it passes the same checks
 (`MemStore ≡ DatomicStore` discipline).
 
+## Content-addressed code graph
+
+`kotobase.code-graph` implements the C2–C5 portable storage/query seam from
+`kotoba-lang/kotoba-lang`'s
+`ADR-kotoba-content-addressed-codebase.md`. It runs over the same `IStore` on a
+local atom or kotobase.net XRPC and provides:
+
+- mandatory host-injected CID verification before definition, type, artifact,
+  namespace, migration-attestation, and receipt admission;
+- dependency-first definition storage and Datom projection;
+- dependency closure, reverse dependency, and transitive effect queries;
+- compiler-contract-keyed Wasm artifact reuse and analysis caches;
+- immutable causal namespace commits (`name -> definition CID`), explicit
+  three-way merge conflicts, and hash-qualified resolution;
+- capability-checked execution receipt persistence linking code, artifact,
+  input/output roots, package lock, policy, CACAO grants, and host receipts;
+- authorization-gated sealed/private views, two-XRPC-node missing-block sync,
+  verified artifact transfer/reuse, and a host-neutral CID-root execution
+  coordinator;
+- authorized cross-contract identity migration attestations; and
+- auditable pin/revoke events plus a non-destructive GC plan for namespace, release,
+  deployment, audit, research, and legal-hold roots.
+
+Cryptographic codecs remain in the language/block layer: the integration suite
+uses `kotoba.semantic-code`'s canonical DAG-CBOR definition, namespace,
+closure, and execution blocks with real CIDv1 verification. Run it with:
+
+```bash
+clojure -M:integration
+```
+
+CID possession is never authority. Package signatures/admission, CACAO,
+capability intersection, local policy, and Wasm host confinement remain
+separate mandatory gates.
+
 ## Consumers
 
 The cloud API workers [local-murakumo](https://github.com/gftdcojp/local-murakumo)
