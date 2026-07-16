@@ -30,7 +30,9 @@ profile-version` -- this repo's version is its package/library semver.
 An implementation conforms when it passes `contract/verify` (document-space
 put/get/list with last-writer-wins, and append-only streams with a strictly
 increasing `:seq` cursor and `read`-since semantics) without special-casing
-the test. See `docs/coverage.edn` for current maturity evidence per stage,
-including an open M5 gap: no confirmed external consumer names this repo by
-package identity today (see `docs/coverage.edn`'s M5 note on the
-`kotobase-clj` naming ambiguity).
+the test. See `docs/coverage.edn` for current maturity evidence per stage.
+M5 (external-implementation-suite) was resolved 2026-07-08: `gftdcojp/
+cloud-manimani` and `gftdcojp/local-murakumo` are both confirmed external
+consumers depending on `io.github.kotoba-lang/kotobase` directly (see
+`docs/coverage.edn`'s M5 note for the `kotobase-clj` naming-ambiguity history
+that predated the fix).
