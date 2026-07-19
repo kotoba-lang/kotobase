@@ -144,6 +144,73 @@
                   "docs" "one")))
     (is (= 1 @calls) "downgraded envelope never reaches XRPC")))
 
+(deftest production-store-requires-signed-capability-hardware-and-remote-telemetry
+  (let [calls (atom 0)
+        seen (atom #{})
+        events (atom [])
+        encode pr-str
+        digest #(str "digest:" (hash %))
+        request-digest (digest (encode [:get {:coll "docs" :key "one"}]))
+        token {:capability/version 1 :capability/audience :kotobase
+               :capability/subject :service/api
+               :capability/actions #{:kotobase/read}
+               :capability/resources #{"docs/one"}
+               :capability/request-digest request-digest
+               :capability/not-before-ms 1000
+               :capability/expires-at-ms 2000
+               :capability/nonce "nonce-1"
+               :capability/signature [:valid request-digest]}
+        hardware {:provider-id :apple-secure-enclave
+                  :hardware-backed? true :provider-origin-verified? true
+                  :private-exported? false :sign-verified? true
+                  :unavailable-failed-closed? true}
+        options {:capability-required? true
+                 :capability-token-fn (fn [_ _] token)
+                 :capability-context
+                 {:audience :kotobase :subject :service/api :now-ms 1500
+                  :verify-signature-fn
+                  (fn [body signature]
+                    (= signature
+                       [:valid (:capability/request-digest body)]))
+                  :consume-nonce-fn
+                  #(if (contains? @seen %)
+                     false (do (swap! seen conj %) true))}
+                 :request-encode-fn encode :request-digest-fn digest
+                 :hardware-signing-required? true
+                 :hardware-signing-evidence hardware
+                 :remote-telemetry-required? true
+                 :telemetry-events events :telemetry-encode-fn encode
+                 :telemetry-digest-fn digest
+                 :telemetry-append-fn
+                 (fn [entry]
+                   {:telemetry/hash (:telemetry/hash entry)
+                    :telemetry/remote? true :telemetry/immutable? true
+                    :signature :valid})
+                 :telemetry-verify-ack-fn #(= :valid (:signature %))}
+        store (kb/kotobase-store
+               (fn [_ _] (swap! calls inc) :ok) options)]
+    (is (= :ok (st/-get store "docs" "one")))
+    (is (= 1 @calls))
+    (is (= 1 (count @events)))
+    (is (thrown-with-msg?
+         #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+         #"signed capability denies"
+         (st/-get store "docs" "one"))
+        "nonce replay is rejected before XRPC")
+    (is (= 1 @calls))
+    (is (thrown-with-msg?
+         #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+         #"hardware signing policy denies"
+         (st/-get
+          (kb/kotobase-store
+           (fn [_ _] (swap! calls inc) :bad)
+           (-> options
+               (assoc :capability-required? false)
+               (assoc-in [:hardware-signing-evidence :private-exported?]
+                         true)))
+          "docs" "one")))
+    (is (= 1 @calls))))
+
 (deftest transactional-store-is-atomic-idempotent-and-conflict-aware
   (let [s (local/local-store)
         request {:tx-id "tx-1" :expected-revision 0
