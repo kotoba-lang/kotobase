@@ -54,6 +54,74 @@
     (is (= 0 (:revision (st/-snapshot transactional
                                         {:collections [] :streams []}))))))
 
+(deftest remote-store-enforces-shared-abac-before-xrpc
+  (let [calls (atom [])
+        decisions (atom [])
+        remote (kb/kotobase-store
+                (fn [method params] (swap! calls conj [method params]) :ok)
+                {:abac-attributes
+                 {:subject {:id :service/api :tenant "alpha"}
+                  :resource {:tenant "alpha" :trust :tenant-data}
+                  :environment {:surface :service :network-zone :private}}
+                 :abac-policy
+                 {:policy/id :kotobase/tenant-read
+                  :subject/ids #{:service/api}
+                  :resource/ids #{"documents/allowed"}
+                  :resource/trust #{:tenant-data}
+                  :action/ids #{:kotobase/read}
+                  :action/capabilities #{:kotobase/get}
+                  :environment/surfaces #{:service}
+                  :environment/network-zones #{:private}
+                  :tenant/isolation? true}
+                 :audit! #(swap! decisions conj %)})]
+    (is (= :ok (st/-get remote "documents" "allowed")))
+    (is (thrown-with-msg?
+         #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+         #"ABAC policy denies kotobase operation"
+         (st/-get remote "documents" "other")))
+    (is (= 1 (count @calls)) "denied operation never reaches transport")
+    (is (= [true false] (mapv :abac/allowed? @decisions)))))
+
+(deftest write-egress-requires-explicit-declassification
+  (let [calls (atom [])
+        remote (kb/kotobase-store
+                (fn [method params] (swap! calls conj [method params]) :ok)
+                {:information-flow-context
+                 {:subject :service/export :purpose :replication
+                  :now "2026-07-19T12:00:00Z"
+                  :input-classifications [:confidential]
+                  :output-classification :public}})]
+    (is (= :ok (st/-get remote "public" "status"))
+        "reads do not disclose caller-provided data")
+    (is (thrown-with-msg?
+         #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+         #"information-flow policy denies kotobase egress"
+         (st/-put remote "public" "export" {:secret true})))
+    (is (= 1 (count @calls)) "denied write never reaches XRPC")))
+
+(deftest xrpc-requires-complete-mutual-tls-profile
+  (let [calls (atom 0)
+        base {:protocol :tls-1.3 :mutual-auth? true
+              :peer-id "did:web:kotobase.net"
+              :expected-peer-id "did:web:kotobase.net"
+              :certificate-fingerprint "sha256:current"
+              :trusted-fingerprints #{"sha256:current" "sha256:next"}
+              :revocation-checked? true :now "2026-07-19T12:00:00Z"
+              :certificate-expires-at "2026-08-01T00:00:00Z"
+              :require-rotation-overlap? true
+              :next-certificate-fingerprint "sha256:next"}
+        allowed (kb/kotobase-store (fn [_ _] (swap! calls inc) :ok)
+                                    {:transport-profile base})
+        denied (kb/kotobase-store (fn [_ _] (swap! calls inc) :bad)
+                                   {:transport-profile
+                                    (dissoc base :next-certificate-fingerprint)})]
+    (is (= :ok (st/-get allowed "docs" "one")))
+    (is (thrown-with-msg?
+         #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+         #"transport profile denies kotobase XRPC"
+         (st/-get denied "docs" "one")))
+    (is (= 1 @calls) "denied transport profile never invokes XRPC")))
+
 (deftest transactional-store-is-atomic-idempotent-and-conflict-aware
   (let [s (local/local-store)
         request {:tx-id "tx-1" :expected-revision 0
