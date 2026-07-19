@@ -13,6 +13,7 @@
   kotobase.net itself backs that graph onto external object storage (git-annex/B2,
   S3) — so 'kotoba external storage' is exactly this record pointed at the PDS."
   (:require [kotoba.security.abac :as abac]
+            [kotoba.security.crypto-policy :as crypto]
             [kotoba.security.information-flow :as flow]
             [kotoba.security.transport :as transport]
             [kotobase.store :as st]))
@@ -35,9 +36,10 @@
   immediately before every remote operation and never invokes XRPC on deny."
   [xrpc {:keys [abac-policy abac-attributes audit!
                 information-flow-context information-flow-audit!
-                transport-profile transport-audit!]
+                transport-profile transport-audit!
+                crypto-required? crypto-policy crypto-envelope crypto-audit!]
          :or {audit! (fn [_] nil) information-flow-audit! (fn [_] nil)
-              transport-audit! (fn [_] nil)}}]
+              transport-audit! (fn [_] nil) crypto-audit! (fn [_] nil)}}]
   (fn [method params]
     (let [decision
           (abac/evaluate
@@ -54,11 +56,15 @@
           flow-decision (when (and (write-methods method)
                                    information-flow-context)
                           (flow/evaluate-egress information-flow-context))
+          crypto-decision (when (or crypto-required? crypto-envelope)
+                            (crypto/check-production-envelope
+                             crypto-policy crypto-envelope))
           transport-decision (when transport-profile
                                (transport/evaluate transport-profile))]
       (when abac-policy (audit! decision))
       (when flow-decision (information-flow-audit! flow-decision))
       (when transport-decision (transport-audit! transport-decision))
+      (when crypto-decision (crypto-audit! crypto-decision))
       (cond
         (not (:abac/allowed? decision))
         (throw (ex-info "ABAC policy denies kotobase operation"
@@ -80,6 +86,11 @@
                          :method method
                          :transport/violations
                          (:transport/violations transport-decision)}))
+
+        (and crypto-required? (not (:valid? crypto-decision)))
+        (throw (ex-info "hybrid PQC policy denies kotobase XRPC"
+                        {:type :kotobase/crypto-denied :method method
+                         :crypto crypto-decision}))
 
         :else
         (xrpc method params)
@@ -109,8 +120,9 @@
   `(fn [method params] -> result)`."
   ([xrpc] (->KotobaseStore xrpc))
   ([xrpc {:keys [transactional? abac-policy information-flow-context
-                 transport-profile] :as options}]
-   (let [xrpc (if (or abac-policy information-flow-context transport-profile)
+                 transport-profile crypto-required?] :as options}]
+   (let [xrpc (if (or abac-policy information-flow-context transport-profile
+                      crypto-required?)
                 (authorize-xrpc xrpc options)
                 xrpc)]
      (if transactional?
