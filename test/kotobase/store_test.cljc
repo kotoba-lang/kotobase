@@ -211,6 +211,86 @@
           "docs" "one")))
     (is (= 1 @calls))))
 
+(defn- signed-approval [approver role digest]
+  {:approval/version 1 :approval/approver approver :approval/role role
+   :approval/request-digest digest :approval/not-before-ms 1000
+   :approval/expires-at-ms 2000
+   :approval/signature [:valid approver digest]})
+
+(deftest governed-xrpc-requires-independent-approval-and-bounded-request
+  (let [calls (atom 0)
+        encode pr-str
+        digest #(str "digest:" (hash %))
+        params {:coll "docs" :key "one"}
+        request-digest (digest (encode [:get params]))
+        approvals [(signed-approval :alice :security request-digest)
+                   (signed-approval :bob :data-owner request-digest)]
+        base {:approval-required? true
+              :approvals-fn (fn [_ _] approvals)
+              :approval-context
+              {:initiator :service/api
+               :required-roles #{:security :data-owner}
+               :min-approvals 2 :now-ms 1500
+               :verify-signature-fn
+               (fn [body signature]
+                 (= signature [:valid (:approval/approver body)
+                               (:approval/request-digest body)]))}
+              :request-bounds-required? true
+              :request-encode-fn encode :request-digest-fn digest
+              :request-size-fn count :max-request-bytes 1000}
+        store (kb/kotobase-store (fn [_ _] (swap! calls inc) :ok) base)]
+    (is (= :ok (st/-get store "docs" "one")))
+    (is (= 1 @calls))
+    (doseq [bad [(assoc base :approvals-fn (fn [_ _] [(first approvals)]))
+                 (assoc base :approvals-fn
+                        (fn [_ _] [(first approvals)
+                                    (assoc (second approvals)
+                                           :approval/approver :alice)]))
+                 (assoc base :max-request-bytes 1)
+                 (dissoc base :request-size-fn)]]
+      (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+                   (st/-get (kb/kotobase-store
+                             (fn [_ _] (swap! calls inc) :bad) bad)
+                            "docs" "one"))))
+    (is (= 1 @calls) "all governance denials happen before XRPC")))
+
+(deftest production-store-requires-qualified-restore-readiness
+  (let [digest "sha256:snapshot"
+        restore {:restore-drill/status :passed
+                 :restore-drill/destructive? true
+                 :restore-drill/sites #{:region-a :region-b}
+                 :restore-drill/backups-encrypted? true
+                 :restore-drill/backups-immutable? true
+                 :restore-drill/artifact-digest digest
+                 :restore-drill/digest-verified? true
+                 :restore-drill/rto-ms 40 :restore-drill/rto-limit-ms 100
+                 :restore-drill/rpo-ms 20 :restore-drill/rpo-limit-ms 60}
+        attestation {:receipt/version 1 :receipt/environment :production
+                     :receipt/authority-id :recovery-operations
+                     :receipt/artifact-digest digest :receipt/issued-at-ms 1500
+                     :receipt/signature [:valid digest]}
+        base {:recovery-required? true :recovery-artifact-digest digest
+              :restore-receipt restore :restore-attestation attestation
+              :restore-attestation-context
+              {:environment :production :authority-id :recovery-operations
+               :now-ms 1600 :max-age-ms 500
+               :verify-signature-fn
+               (fn [body signature]
+                 (= signature [:valid (:receipt/artifact-digest body)]))}}]
+    (is (st/store? (kb/kotobase-store (fn [_ _] :ok) base)))
+    (doseq [bad [(assoc-in base [:restore-receipt
+                                 :restore-drill/backups-immutable?] false)
+                 (assoc-in base [:restore-receipt :restore-drill/sites]
+                           #{:region-a})
+                 (assoc-in base [:restore-attestation :receipt/signature]
+                           [:forged])
+                 (assoc-in base [:restore-attestation :receipt/artifact-digest]
+                           "sha256:other")]]
+      (is (thrown-with-msg?
+           #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+           #"recovery readiness denies"
+           (kb/kotobase-store (fn [_ _] :bad) bad))))))
+
 (deftest transactional-store-is-atomic-idempotent-and-conflict-aware
   (let [s (local/local-store)
         request {:tx-id "tx-1" :expected-revision 0

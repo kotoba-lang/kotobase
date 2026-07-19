@@ -13,10 +13,12 @@
   kotobase.net itself backs that graph onto external object storage (git-annex/B2,
   S3) — so 'kotoba external storage' is exactly this record pointed at the PDS."
   (:require [kotoba.security.abac :as abac]
+            [kotoba.security.approval :as approval]
             [kotoba.security.capability :as capability]
             [kotoba.security.crypto-policy :as crypto]
             [kotoba.security.hardware :as hardware]
             [kotoba.security.information-flow :as flow]
+            [kotoba.security.qualification :as qualification]
             [kotoba.security.resilience :as resilience]
             [kotoba.security.transport :as transport]
             [kotobase.sealed-store :as sealed-store]
@@ -44,6 +46,9 @@
                 crypto-required? crypto-policy crypto-envelope crypto-audit!
                 capability-required? capability-token-fn capability-context
                 request-encode-fn request-digest-fn capability-audit!
+                approval-required? approvals-fn approval-context approval-audit!
+                request-bounds-required? request-size-fn max-request-bytes
+                request-bounds-audit!
                 hardware-signing-required? hardware-signing-evidence
                 hardware-signing-audit!
                 remote-telemetry-required? telemetry-events
@@ -52,6 +57,8 @@
          :or {audit! (fn [_] nil) information-flow-audit! (fn [_] nil)
               transport-audit! (fn [_] nil) crypto-audit! (fn [_] nil)
               capability-audit! (fn [_] nil)
+              approval-audit! (fn [_] nil)
+              request-bounds-audit! (fn [_] nil)
               hardware-signing-audit! (fn [_] nil)}}]
   (fn [method params]
     (let [decision
@@ -69,9 +76,19 @@
           flow-decision (when (and (write-methods method)
                                    information-flow-context)
                           (flow/evaluate-egress information-flow-context))
-          request-digest (when (and request-encode-fn request-digest-fn)
-                           (request-digest-fn
-                            (request-encode-fn [method params])))
+          encoded-request (when (ifn? request-encode-fn)
+                            (request-encode-fn [method params]))
+          request-digest (when (and encoded-request request-digest-fn)
+                           (request-digest-fn encoded-request))
+          request-size (when (and encoded-request (ifn? request-size-fn))
+                         (request-size-fn encoded-request))
+          request-bounds-decision
+          (when request-bounds-required?
+            {:request-bounds/allowed?
+             (and (nat-int? request-size) (nat-int? max-request-bytes)
+                  (<= request-size max-request-bytes))
+             :request-bounds/size request-size
+             :request-bounds/maximum max-request-bytes})
           capability-decision
           (when capability-required?
             (capability/evaluate
@@ -82,6 +99,11 @@
                                :kotobase/write :kotobase/read)
                      :resource (resource-id method params)
                      :request-digest request-digest})))
+          approval-decision
+          (when approval-required?
+            (approval/evaluate
+             (when (ifn? approvals-fn) (approvals-fn method params))
+             (assoc approval-context :request-digest request-digest)))
           hardware-signing-decision
           (when hardware-signing-required?
             (hardware/evaluate-signing hardware-signing-evidence))
@@ -95,6 +117,9 @@
       (when transport-decision (transport-audit! transport-decision))
       (when crypto-decision (crypto-audit! crypto-decision))
       (when capability-decision (capability-audit! capability-decision))
+      (when approval-decision (approval-audit! approval-decision))
+      (when request-bounds-decision
+        (request-bounds-audit! request-bounds-decision))
       (when hardware-signing-decision
         (hardware-signing-audit! hardware-signing-decision))
       (cond
@@ -110,6 +135,18 @@
         (throw (ex-info "hardware signing policy denies kotobase XRPC"
                         {:type :kotobase/hardware-signing-denied :method method
                          :hardware-signing hardware-signing-decision}))
+
+        (and approval-required?
+             (not (:approval/allowed? approval-decision)))
+        (throw (ex-info "approval quorum denies kotobase XRPC"
+                        {:type :kotobase/approval-denied :method method
+                         :approval approval-decision}))
+
+        (and request-bounds-required?
+             (not (:request-bounds/allowed? request-bounds-decision)))
+        (throw (ex-info "request bounds deny kotobase XRPC"
+                        {:type :kotobase/request-bounds-denied :method method
+                         :request-bounds request-bounds-decision}))
 
         (not (:abac/allowed? decision))
         (throw (ex-info "ABAC policy denies kotobase operation"
@@ -159,6 +196,32 @@
           (xrpc method params))
         ))))
 
+(defn evaluate-recovery-readiness
+  [{:keys [recovery-artifact-digest restore-receipt restore-attestation
+           restore-attestation-context]}]
+  (let [restore (resilience/evaluate-restore-receipt
+                 restore-receipt recovery-artifact-digest)
+        attestation (qualification/verify-signed-receipt
+                     restore-attestation restore-attestation-context)
+        violations (cond-> []
+                     (not (:restore-drill/qualified? restore))
+                     (conj :restore-drill)
+                     (not (:qualification/accepted? attestation))
+                     (conj :restore-attestation)
+                     (not= recovery-artifact-digest
+                           (:qualification/artifact-digest attestation))
+                     (conj :artifact-binding))]
+    {:recovery/ready? (empty? violations)
+     :recovery/violations violations
+     :recovery/restore restore
+     :recovery/attestation attestation}))
+
+(defn enforce-recovery-readiness! [options]
+  (let [result (evaluate-recovery-readiness options)]
+    (when-not (:recovery/ready? result)
+      (throw (ex-info "recovery readiness denies kotobase store" result)))
+    result))
+
 (deftype KotobaseStore [xrpc]
   st/IStore
   (-put  [_ coll k v] (xrpc :put  {:coll coll :key k :val v}))
@@ -185,14 +248,17 @@
   ([xrpc {:keys [transactional? abac-policy information-flow-context
                  transport-profile crypto-required? capability-required?
                  hardware-signing-required? remote-telemetry-required?
-                 sealed-store-options]
+                 approval-required? request-bounds-required?
+                 recovery-required? sealed-store-options]
           :as options}]
-   (let [xrpc (if sealed-store-options
+   (let [_ (when recovery-required? (enforce-recovery-readiness! options))
+         xrpc (if sealed-store-options
                 (sealed-store/wrap-xrpc xrpc sealed-store-options)
                 xrpc)
          xrpc (if (or abac-policy information-flow-context transport-profile
                       crypto-required? capability-required?
-                      hardware-signing-required? remote-telemetry-required?)
+                      hardware-signing-required? remote-telemetry-required?
+                      approval-required? request-bounds-required?)
                 (authorize-xrpc xrpc options)
                 xrpc)]
      (if transactional?
