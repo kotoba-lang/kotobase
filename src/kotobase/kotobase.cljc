@@ -19,6 +19,7 @@
             [kotoba.security.information-flow :as flow]
             [kotoba.security.resilience :as resilience]
             [kotoba.security.transport :as transport]
+            [kotobase.sealed-store :as sealed-store]
             [kotobase.store :as st]))
 
 (def write-methods #{:put :append :transact})
@@ -183,9 +184,13 @@
   ([xrpc] (->KotobaseStore xrpc))
   ([xrpc {:keys [transactional? abac-policy information-flow-context
                  transport-profile crypto-required? capability-required?
-                 hardware-signing-required? remote-telemetry-required?]
+                 hardware-signing-required? remote-telemetry-required?
+                 sealed-store-options]
           :as options}]
-   (let [xrpc (if (or abac-policy information-flow-context transport-profile
+   (let [xrpc (if sealed-store-options
+                (sealed-store/wrap-xrpc xrpc sealed-store-options)
+                xrpc)
+         xrpc (if (or abac-policy information-flow-context transport-profile
                       crypto-required? capability-required?
                       hardware-signing-required? remote-telemetry-required?)
                 (authorize-xrpc xrpc options)
