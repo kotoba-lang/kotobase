@@ -3,7 +3,7 @@
  ;; the KotobaseStore (which talks to kotobase.net through a HOST-INJECTED `xrpc`
  ;; fn — no HTTP client baked in, so it runs unchanged on JVM / cljs / a Cloudflare
  ;; Worker / kotoba-WASM). The injecting host supplies the transport (`fetch`).
- :deps {}
+ :deps {io.github.kotoba-lang/security {:local/root "../security"}}
  :aliases
  {:cljs-test {:extra-paths ["test"]
               :extra-deps {org.clojure/clojurescript {:mvn/version "1.11.132"}}}
