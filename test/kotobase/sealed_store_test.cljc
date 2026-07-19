@@ -50,12 +50,49 @@
                                           :val {:secret true}})))
       (is (zero? @calls)))))
 
-(deftest transaction-cannot-bypass-payload-sealing
+(deftest transaction-seals-every-value-and-preserves-control-fields
+  (let [calls (atom [])
+        remote (sealed/wrap-xrpc
+                (fn [method params] (swap! calls conj [method params]) :ok)
+                options)
+        request {:tx-id "tx-1" :expected-revision 4
+                 :puts [["vault" "one" {:password "a"}]
+                        ["vault" "two" {:password "b"}]]
+                 :deletes [["vault" "old"]]
+                 :appends [["audit" {:secret "event"}]]}]
+    (is (= :ok (remote :transact request)))
+    (is (= "tx-1" (get-in @calls [0 1 :tx-id])))
+    (is (= 4 (get-in @calls [0 1 :expected-revision])))
+    (is (= [["vault" "old"]] (get-in @calls [0 1 :deletes])))
+    (is (every? #(= :encrypted (get-in % [2 :sealed/ciphertext 0]))
+                (get-in @calls [0 1 :puts])))
+    (is (= :encrypted
+           (get-in @calls [0 1 :appends 0 1 :sealed/ciphertext 0])))))
+
+(deftest one-invalid-batch-value-denies-the-entire-xrpc
+  (let [calls (atom 0)
+        seal-calls (atom 0)
+        bad-options
+        (assoc options :seal-fn
+               (fn [value]
+                 (if (= 2 (swap! seal-calls inc))
+                   (assoc (good-seal value) :envelope/hybrid? false)
+                   (good-seal value))))
+        remote (sealed/wrap-xrpc (fn [_ _] (swap! calls inc)) bad-options)]
+    (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+                          #"kotobase sealed write denied"
+                          (remote :transact
+                                  {:puts [["vault" "one" :a]
+                                          ["vault" "two" :b]]
+                                   :appends []})))
+    (is (zero? @calls))))
+
+(deftest malformed-batch-shape-fails-closed
   (let [calls (atom 0)
         remote (sealed/wrap-xrpc (fn [_ _] (swap! calls inc)) options)]
     (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
-                          #"sealed transaction envelope required"
-                          (remote :transact {:puts [["vault" "one" :secret]]})))
+                          #"invalid sealed transaction put"
+                          (remote :transact {:puts [["missing-value"]]})))
     (is (zero? @calls))))
 
 (deftest production-store-factory-applies-sealing-to-put

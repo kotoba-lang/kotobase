@@ -45,16 +45,35 @@
       (throw (ex-info "kotobase sealed write denied" result)))
     (:sealed/value result)))
 
-(defn wrap-xrpc
-  "Encrypt :put/:append payloads before invoking xrpc.
+(defn- seal-put! [options put]
+  (when-not (and (vector? put) (= 3 (count put)))
+    (throw (ex-info "invalid sealed transaction put"
+                    {:type :kotobase/invalid-transaction-put})))
+  (update put 2 #(seal-value! options %)))
 
-  Transaction batches require a purpose-built batch envelope and therefore
-  fail closed here instead of accidentally forwarding nested plaintext."
+(defn- seal-append! [options append]
+  (when-not (and (vector? append) (= 2 (count append)))
+    (throw (ex-info "invalid sealed transaction append"
+                    {:type :kotobase/invalid-transaction-append})))
+  (update append 1 #(seal-value! options %)))
+
+(defn seal-transaction!
+  "Seal every value-bearing operation while preserving transaction metadata."
+  [options request]
+  (when-not (map? request)
+    (throw (ex-info "invalid sealed transaction request"
+                    {:type :kotobase/invalid-transaction-request})))
+  (-> request
+      (update :puts #(mapv (partial seal-put! options) (or % [])))
+      (update :appends #(mapv (partial seal-append! options) (or % [])))))
+
+(defn wrap-xrpc
+  "Encrypt :put/:append and every value-bearing transaction payload before
+  invoking xrpc. Any invalid item denies the entire batch before transport."
   [xrpc options]
   (fn [method params]
     (if-let [payload-key (get payload-keys method)]
       (xrpc method (update params payload-key #(seal-value! options %)))
       (if (= :transact method)
-        (throw (ex-info "sealed transaction envelope required"
-                        {:type :kotobase/sealed-transaction-required}))
+        (xrpc method (seal-transaction! options params))
         (xrpc method params)))))
