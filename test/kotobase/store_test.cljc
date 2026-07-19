@@ -122,6 +122,28 @@
          (st/-get denied "docs" "one")))
     (is (= 1 @calls) "denied transport profile never invokes XRPC")))
 
+(deftest production-xrpc-requires-real-hybrid-pqc-envelope
+  (let [calls (atom 0)
+        policy {:kotoba.security/crypto-policy-version 1
+                :mode :hybrid-required :hybrid-epoch-floor 1}
+        envelope {:envelope/provider {:provider/id :kagi
+                                      :provider/fips-validated false}
+                  :envelope/kem? true :envelope/hybrid? true
+                  :envelope/epoch 2
+                  :envelope/algorithms [:x25519 :ml-kem-768]}
+        make-store (fn [e]
+                     (kb/kotobase-store
+                      (fn [_ _] (swap! calls inc) :ok)
+                      {:crypto-required? true :crypto-policy policy
+                       :crypto-envelope e}))]
+    (is (= :ok (st/-get (make-store envelope) "docs" "one")))
+    (is (thrown-with-msg?
+         #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+         #"hybrid PQC policy denies"
+         (st/-get (make-store (assoc envelope :envelope/algorithms [:x25519]))
+                  "docs" "one")))
+    (is (= 1 @calls) "downgraded envelope never reaches XRPC")))
+
 (deftest transactional-store-is-atomic-idempotent-and-conflict-aware
   (let [s (local/local-store)
         request {:tx-id "tx-1" :expected-revision 0
