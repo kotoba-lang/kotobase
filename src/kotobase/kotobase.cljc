@@ -13,8 +13,11 @@
   kotobase.net itself backs that graph onto external object storage (git-annex/B2,
   S3) — so 'kotoba external storage' is exactly this record pointed at the PDS."
   (:require [kotoba.security.abac :as abac]
+            [kotoba.security.capability :as capability]
             [kotoba.security.crypto-policy :as crypto]
+            [kotoba.security.hardware :as hardware]
             [kotoba.security.information-flow :as flow]
+            [kotoba.security.resilience :as resilience]
             [kotoba.security.transport :as transport]
             [kotobase.store :as st]))
 
@@ -37,9 +40,18 @@
   [xrpc {:keys [abac-policy abac-attributes audit!
                 information-flow-context information-flow-audit!
                 transport-profile transport-audit!
-                crypto-required? crypto-policy crypto-envelope crypto-audit!]
+                crypto-required? crypto-policy crypto-envelope crypto-audit!
+                capability-required? capability-token-fn capability-context
+                request-encode-fn request-digest-fn capability-audit!
+                hardware-signing-required? hardware-signing-evidence
+                hardware-signing-audit!
+                remote-telemetry-required? telemetry-events
+                telemetry-encode-fn telemetry-digest-fn
+                telemetry-append-fn telemetry-verify-ack-fn]
          :or {audit! (fn [_] nil) information-flow-audit! (fn [_] nil)
-              transport-audit! (fn [_] nil) crypto-audit! (fn [_] nil)}}]
+              transport-audit! (fn [_] nil) crypto-audit! (fn [_] nil)
+              capability-audit! (fn [_] nil)
+              hardware-signing-audit! (fn [_] nil)}}]
   (fn [method params]
     (let [decision
           (abac/evaluate
@@ -56,6 +68,22 @@
           flow-decision (when (and (write-methods method)
                                    information-flow-context)
                           (flow/evaluate-egress information-flow-context))
+          request-digest (when (and request-encode-fn request-digest-fn)
+                           (request-digest-fn
+                            (request-encode-fn [method params])))
+          capability-decision
+          (when capability-required?
+            (capability/evaluate
+             (when (ifn? capability-token-fn)
+               (capability-token-fn method params))
+             (merge capability-context
+                    {:action (if (write-methods method)
+                               :kotobase/write :kotobase/read)
+                     :resource (resource-id method params)
+                     :request-digest request-digest})))
+          hardware-signing-decision
+          (when hardware-signing-required?
+            (hardware/evaluate-signing hardware-signing-evidence))
           crypto-decision (when (or crypto-required? crypto-envelope)
                             (crypto/check-production-envelope
                              crypto-policy crypto-envelope))
@@ -65,7 +93,23 @@
       (when flow-decision (information-flow-audit! flow-decision))
       (when transport-decision (transport-audit! transport-decision))
       (when crypto-decision (crypto-audit! crypto-decision))
+      (when capability-decision (capability-audit! capability-decision))
+      (when hardware-signing-decision
+        (hardware-signing-audit! hardware-signing-decision))
       (cond
+        (and capability-required?
+             (not (:capability/allowed? capability-decision)))
+        (throw (ex-info "signed capability denies kotobase XRPC"
+                        {:type :kotobase/capability-denied :method method
+                         :capability capability-decision}))
+
+        (and hardware-signing-required?
+             (not (:hardware-signing/qualified?
+                   hardware-signing-decision)))
+        (throw (ex-info "hardware signing policy denies kotobase XRPC"
+                        {:type :kotobase/hardware-signing-denied :method method
+                         :hardware-signing hardware-signing-decision}))
+
         (not (:abac/allowed? decision))
         (throw (ex-info "ABAC policy denies kotobase operation"
                         {:type :kotobase/abac-denied
@@ -93,7 +137,25 @@
                          :crypto crypto-decision}))
 
         :else
-        (xrpc method params)
+        (do
+          (when remote-telemetry-required?
+            (when-not (and (some? telemetry-events)
+                           (ifn? telemetry-append-fn)
+                           (ifn? telemetry-verify-ack-fn))
+              (throw (ex-info "remote immutable telemetry required"
+                              {:type :kotobase/telemetry-denied})))
+            (let [result
+                  (resilience/append-remote-telemetry!
+                   {:events @telemetry-events
+                    :event {:event :kotobase/operation-admitted
+                            :method method :resource (resource-id method params)
+                            :request-digest request-digest}
+                    :encode-fn telemetry-encode-fn
+                    :digest-fn telemetry-digest-fn
+                    :append-fn telemetry-append-fn
+                    :verify-ack-fn telemetry-verify-ack-fn})]
+              (reset! telemetry-events (:telemetry/events result))))
+          (xrpc method params))
         ))))
 
 (deftype KotobaseStore [xrpc]
@@ -120,9 +182,12 @@
   `(fn [method params] -> result)`."
   ([xrpc] (->KotobaseStore xrpc))
   ([xrpc {:keys [transactional? abac-policy information-flow-context
-                 transport-profile crypto-required?] :as options}]
+                 transport-profile crypto-required? capability-required?
+                 hardware-signing-required? remote-telemetry-required?]
+          :as options}]
    (let [xrpc (if (or abac-policy information-flow-context transport-profile
-                      crypto-required?)
+                      crypto-required? capability-required?
+                      hardware-signing-required? remote-telemetry-required?)
                 (authorize-xrpc xrpc options)
                 xrpc)]
      (if transactional?
