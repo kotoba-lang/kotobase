@@ -5,6 +5,7 @@
   verification is host-injected as `(verify cid block)`, keeping kotobase-clj
   portable while making verification mandatory on admission."
   (:require [clojure.string :as str]
+            [kotoba.security.effect :as effect]
             [kotobase.store :as store]))
 
 (def definitions "code.definitions")
@@ -497,13 +498,26 @@
 (defn revoke-pin!
   "Auditably deactivate a pin. Physical deletion remains outside IStore."
   [s id reason]
-  (let [pin (store/-get s retention-pins id)]
-    (require-value some? pin :retention/pin-not-found {:id id})
-    (require-value string? reason :retention/reason-required {:id id})
-    (let [record (assoc pin :active? false :revocation-reason reason)]
-      (store/-put s retention-pins id record)
-      (store/-append s retention-stream {:op :revoke :id id :reason reason})
-      record)))
+  (effect/guard!
+   {:evaluate
+    (fn [{:keys [store pin-id revocation-reason]}]
+      (let [pin (store/-get store retention-pins pin-id)]
+        (require-value some? pin :retention/pin-not-found {:id pin-id})
+        (require-value string? revocation-reason
+                       :retention/reason-required {:id pin-id})
+        {:retention-revoke/allowed? true :retention-revoke/pin pin}))
+    :request {:store s :pin-id id :revocation-reason reason}
+    :approved? :retention-revoke/allowed?
+    :action :retention-pin/revoke
+    :resource id
+    :digest reason
+    :effect
+    (fn [decision]
+      (let [record (assoc (:retention-revoke/pin decision)
+                          :active? false :revocation-reason reason)]
+        (store/-put s retention-pins id record)
+        (store/-append s retention-stream {:op :revoke :id id :reason reason})
+        record))}))
 
 (defn retention-roots [s]
   (set (keep (fn [id]
