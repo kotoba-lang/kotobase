@@ -41,6 +41,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-jdk${{ matrix.java }}-clj-
 
+      - name: Verify shared security adoption
+        run: clojure -M -m kotoba.security.adoption
+
       - name: Run tests
         run: clojure -M:test
 
