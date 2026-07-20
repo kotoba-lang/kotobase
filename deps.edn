@@ -4,7 +4,7 @@
  ;; fn — no HTTP client baked in, so it runs unchanged on JVM / cljs / a Cloudflare
  ;; Worker / kotoba-WASM). The injecting host supplies the transport (`fetch`).
  :deps {io.github.kotoba-lang/security {:git/url "https://github.com/kotoba-lang/security.git"
-                                        :git/sha "40d8556debd7bd83db4fd986dffe7f964ad038fa"}}
+                                        :git/sha "65811c9d6878e881357e98f9f9fe6a60aeff7070"}}
  :aliases
  {:cljs-test {:extra-paths ["test"]
               :extra-deps {org.clojure/clojurescript {:mvn/version "1.11.132"}}}
