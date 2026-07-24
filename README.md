@@ -40,6 +40,16 @@ Neither previously cross-referenced the other two by name alone.
 
 ---
 
+## Stack topology
+
+kotobase's position in the stack (depends on kotoba, **never** the reverse —
+verified: runtime deps are `security` only, `kotoba` appears solely in the
+`:integration` test alias), and the decision to converge the datom plane's
+repo names on the `kotobase-*` prefix (retiring the need for the
+Disambiguation section above), are recorded in
+[`docs/ADR-stack-topology.md`](docs/ADR-stack-topology.md)
+(root authority: `com-junkawasaki/root` ADR-2607241100).
+
 ## Data model — an incidence merkle graph
 
 kotobase does not treat IPLD as a generic tree/DAG encoding — every IPLD
