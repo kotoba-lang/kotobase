@@ -1,0 +1,4 @@
+{:kotobase.audit-anchor-policy/version 1
+ :deployment-profile :production
+ :receipt {:signature-required true :previous-digest-required true}
+ :anchor {:external-required true :reconciliation-required true}}
