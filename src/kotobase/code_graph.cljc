@@ -5,6 +5,7 @@
   verification is host-injected as `(verify cid block)`, keeping kotobase-clj
   portable while making verification mandatory on admission."
   (:require [clojure.string :as str]
+            [kotoba.abi.contract :as abi]
             [kotoba.security.effect :as effect]
             [kotobase.store :as store]))
 
@@ -14,6 +15,7 @@
 (def analysis-cache "code.analysis-cache")
 (def namespace-commits "code.namespace-commits")
 (def execution-receipts "code.execution-receipts")
+(def execution-identities "code.execution-identities")
 (def identity-migrations "code.identity-migrations")
 (def retention-pins "code.retention-pins")
 (def datom-stream "code.datoms")
@@ -367,6 +369,50 @@
 
 (defn execution-receipt [s cid]
   (store/-get s execution-receipts cid))
+
+(defn put-execution-identity!
+  "Verify and persist one portable execution identity before its observed
+  result is exposed. The host supplies VERIFY because this portable store does
+  not choose a hash implementation. The ABI descriptor is closed and contains
+  no bearer capability handle; CID verification authenticates its canonical
+  block at the storage boundary."
+  [s verify {:keys [cid block identity]}]
+  (require-value string? cid :execution-identity/cid-required {})
+  (require-value some? block :execution-identity/block-required {:cid cid})
+  (require-value true? (boolean (verify cid block))
+                 :execution-identity/cid-mismatch {:cid cid})
+  (require-value abi/valid-execution-identity? identity
+                 :execution-identity/invalid-descriptor {:cid cid})
+  (let [record {:cid cid :block block :identity identity}]
+    (if-let [existing (store/-get s execution-identities cid)]
+      (do (require-value #(= existing %) record
+                         :execution-identity/cid-record-conflict {:cid cid})
+          existing)
+      (do
+        (store/-put s execution-identities cid record)
+        (doseq [[attribute value]
+                [[:execution-identity/plan-cid (:plan-cid identity)]
+                 [:execution-identity/code-closure-cid (:code-closure-cid identity)]
+                 [:execution-identity/artifact-cid (:artifact-cid identity)]
+                 [:execution-identity/component-cid (:component-cid identity)]
+                 [:execution-identity/wit-world-cid (:wit-world-cid identity)]
+                 [:execution-identity/policy-cid (:policy-cid identity)]
+                 [:execution-identity/policy-decision-cid (:policy-decision-cid identity)]
+                 [:execution-identity/db-basis (:db-basis identity)]
+                 [:execution-identity/runtime-identity (:runtime-identity identity)]
+                 [:execution-identity/outcome-cid (:outcome-cid identity)]]
+              :when (some? value)]
+          (store/-append s datom-stream {:datom [:db/add cid attribute value]}))
+        (doseq [[attribute values]
+                [[:execution-identity/grant-cid (:grant-cids identity)]
+                 [:execution-identity/approval-cid (:approval-cids identity)]
+                 [:execution-identity/host-receipt-cid (:host-receipt-cids identity)]]
+                value values]
+          (store/-append s datom-stream {:datom [:db/add cid attribute value]}))
+        record))))
+
+(defn execution-identity [s cid]
+  (store/-get s execution-identities cid))
 
 (defn export-closure
   "C5: portable block bundle for ROOT, dependency-first. The receiver may ask

@@ -18,6 +18,19 @@
 (defn record [cid deps effects]
   {:cid cid :block {:cid cid} :dependency-cids deps :effects effects})
 
+(def portable-cid "bafyportableexecutionidentity")
+
+(defn portable-identity []
+  {:format :kotoba.execution-identity/v1
+   :plan-cid "bafyplan" :code-closure-cid "bafyclosure"
+   :artifact-cid "bafyartifact" :compiler-contract "bafycompiler"
+   :component-cid "bafycomponent" :wit-world-cid "bafyworld"
+   :package-lock-cid "bafylock" :policy-cid "bafypolicy"
+   :policy-decision-cid "bafydecision" :db-basis "bafybasis"
+   :grant-cids ["bafygrant"] :approval-cids ["bafyapproval"]
+   :runtime-identity "bafyruntime" :input-cid "bafyinput"
+   :outcome-cid "bafyoutcome" :host-receipt-cids ["bafyhostreceipt"]})
+
 (deftest definitions-are-verified-indexed-and-queryable
   (let [s (local/local-store)]
     (code/put-definition! s verify (record "cid-helper" [] []))
@@ -127,6 +140,23 @@
                                   :granted-effects []))
                  (catch #?(:clj clojure.lang.ExceptionInfo
                            :cljs cljs.core.ExceptionInfo) e e)))))))))
+
+(deftest portable-execution-identities-are-verified-and-datomized
+  (let [s (local/local-store)
+        identity (portable-identity)
+        record {:cid portable-cid :block {:cid portable-cid} :identity identity}]
+    (is (= record (code/put-execution-identity! s verify record)))
+    (is (= record (code/execution-identity s portable-cid)))
+    (is (some #(= [:db/add portable-cid :execution-identity/db-basis "bafybasis"]
+                  (:datom %))
+              (store/-read s code/datom-stream 0)))
+    (is (= :execution-identity/invalid-descriptor
+           (:problem (ex-data
+                      (try (code/put-execution-identity!
+                            s verify (assoc record :cid "bafybad" :block {:cid "bafybad"}
+                                            :identity (assoc identity :unknown true)))
+                           (catch #?(:clj clojure.lang.ExceptionInfo
+                                     :cljs cljs.core.ExceptionInfo) e e))))))))
 
 (deftest missing-block-sync-and-artifact-reuse
   (let [source (local/local-store)
