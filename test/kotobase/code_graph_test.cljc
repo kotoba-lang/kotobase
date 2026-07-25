@@ -158,6 +158,26 @@
                            (catch #?(:clj clojure.lang.ExceptionInfo
                                      :cljs cljs.core.ExceptionInfo) e e))))))))
 
+(deftest query-receipts-are-bound-to-the-identity-basis-policy-and-host-receipt
+  (let [s (local/local-store)
+        identity (portable-identity)
+        identity-record {:cid portable-cid :block {:cid portable-cid} :identity identity}
+        receipt {:cid "bafyhostreceipt" :block {:cid "bafyhostreceipt"}
+                 :execution-identity-cid portable-cid
+                 :query-cid "bafyquery" :result-cid "bafyresult"
+                 :basis "bafybasis" :policy-cid "bafypolicy"
+                 :tenant "acme" :purpose :payment-review :resource-cids ["INV-42"]}]
+    (code/put-execution-identity! s verify identity-record)
+    (is (= receipt (code/put-query-receipt! s verify receipt)))
+    (is (= receipt (code/query-receipt s "bafyhostreceipt")))
+    (is (= :query-receipt/basis-mismatch
+           (:problem (ex-data
+                      (try (code/put-query-receipt!
+                            s verify (assoc receipt :cid "bafyother" :block {:cid "bafyother"}
+                                            :basis "bafyotherbasis"))
+                           (catch #?(:clj clojure.lang.ExceptionInfo
+                                     :cljs cljs.core.ExceptionInfo) e e))))))))
+
 (deftest missing-block-sync-and-artifact-reuse
   (let [source (local/local-store)
         target (local/local-store)]

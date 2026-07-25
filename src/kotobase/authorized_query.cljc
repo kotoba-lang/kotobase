@@ -63,3 +63,23 @@
   (let [rows (evaluate! (:query compiled) (:decision compiled))]
     (when-not (vector? rows) (reject! :invalid-result {}))
     {:rows rows :provenance (:provenance compiled)}))
+
+(defn receipt-projection
+  "Return the non-sensitive, immutable-fact projection a host must bind into
+  a content-addressed query receipt.  The query and result CIDs are supplied
+  by the host's canonical codec; this gateway never hashes an ad-hoc printed
+  representation."
+  [compiled query-cid result-cid]
+  (when-not (and (map? compiled) (= #{:query :decision :provenance} (set (keys compiled))))
+    (reject! :invalid-compiled-query {}))
+  (when-not (and (string? query-cid) (seq query-cid)
+                 (string? result-cid) (seq result-cid))
+    (reject! :invalid-receipt-identity {}))
+  (let [scope (get-in compiled [:query :scope])]
+    {:query-cid query-cid
+     :result-cid result-cid
+     :basis (:basis (:provenance compiled))
+     :policy-cid (:policy-cid (:provenance compiled))
+     :tenant (:tenant scope)
+     :purpose (:purpose scope)
+     :resource-cids (->> (:resources scope) sort vec)}))

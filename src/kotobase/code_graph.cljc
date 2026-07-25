@@ -16,6 +16,7 @@
 (def namespace-commits "code.namespace-commits")
 (def execution-receipts "code.execution-receipts")
 (def execution-identities "code.execution-identities")
+(def query-receipts "code.query-receipts")
 (def identity-migrations "code.identity-migrations")
 (def retention-pins "code.retention-pins")
 (def datom-stream "code.datoms")
@@ -413,6 +414,67 @@
 
 (defn execution-identity [s cid]
   (store/-get s execution-identities cid))
+
+(def query-receipt-keys
+  #{:cid :block :execution-identity-cid :query-cid :result-cid
+    :basis :policy-cid :tenant :purpose :resource-cids})
+
+(defn put-query-receipt!
+  "Persist a content-addressed receipt for an authorized data read.
+
+  The receipt block intentionally does not contain EXECUTION-IDENTITY-CID:
+  an execution identity already lists this receipt CID, so including the
+  reverse link in the hashed block would create a CID cycle.  Kotobase stores
+  that reverse association as an immutable datom after verifying both sides.
+  Raw query results are addressed by RESULT-CID and never projected here."
+  [s verify {:keys [cid block execution-identity-cid query-cid result-cid
+                    basis policy-cid tenant purpose resource-cids] :as receipt}]
+  (require-value #(= query-receipt-keys (set (keys %))) receipt
+                 :query-receipt/invalid-record {})
+  (doseq [[value problem] [[cid :query-receipt/cid-required]
+                           [execution-identity-cid :query-receipt/execution-identity-required]
+                           [query-cid :query-receipt/query-cid-required]
+                           [result-cid :query-receipt/result-cid-required]
+                           [basis :query-receipt/basis-required]
+                           [policy-cid :query-receipt/policy-required]
+                           [tenant :query-receipt/tenant-required]]]
+    (require-value #(and (string? %) (seq %)) value problem {}))
+  (require-value keyword? purpose :query-receipt/purpose-required {})
+  (require-value #(and (vector? %) (seq %) (every? string? %)) resource-cids
+                 :query-receipt/resources-invalid {})
+  (require-value true? (boolean (verify cid block)) :query-receipt/cid-mismatch {:cid cid})
+  (let [identity-record (execution-identity s execution-identity-cid)
+        identity (:identity identity-record)]
+    (require-value some? identity-record :query-receipt/execution-identity-missing
+                   {:execution-identity-cid execution-identity-cid})
+    (require-value #(contains? (set (:host-receipt-cids identity)) cid)
+                   :query-receipt/not-bound-by-identity
+                   {:execution-identity-cid execution-identity-cid :cid cid})
+    (require-value #(= basis (:db-basis identity)) :query-receipt/basis-mismatch
+                   {:basis basis :identity-basis (:db-basis identity)})
+    (require-value #(= policy-cid (:policy-cid identity)) :query-receipt/policy-mismatch
+                   {:policy-cid policy-cid :identity-policy-cid (:policy-cid identity)})
+    (if-let [existing (store/-get s query-receipts cid)]
+      (do (require-value #(= existing %) receipt :query-receipt/cid-record-conflict {:cid cid})
+          existing)
+      (do
+        (store/-put s query-receipts cid receipt)
+        (doseq [[attribute value]
+                [[:query-receipt/execution-identity execution-identity-cid]
+                 [:query-receipt/query-cid query-cid]
+                 [:query-receipt/result-cid result-cid]
+                 [:query-receipt/basis basis]
+                 [:query-receipt/policy-cid policy-cid]
+                 [:query-receipt/tenant tenant]
+                 [:query-receipt/purpose purpose]]]
+          (store/-append s datom-stream {:datom [:db/add cid attribute value]}))
+        (doseq [resource-cid resource-cids]
+          (store/-append s datom-stream
+                         {:datom [:db/add cid :query-receipt/resource-cid resource-cid]}))
+        receipt))))
+
+(defn query-receipt [s cid]
+  (store/-get s query-receipts cid))
 
 (defn export-closure
   "C5: portable block bundle for ROOT, dependency-first. The receiver may ask

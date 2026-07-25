@@ -22,6 +22,13 @@
             (ex-data (try (query/compile! #(assoc (authorize %) :projection #{:invoice/id}) request)
                           (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo) e e))))))))
 
+(deftest query-receipt-projection-keeps-the-query-basis-and-scope
+  (let [compiled (query/compile! authorize request)]
+    (is (= {:query-cid "bafy-query" :result-cid "bafy-result"
+            :basis "bafy-basis" :policy-cid "bafy-policy"
+            :tenant "acme" :purpose :payment-review :resource-cids ["INV-42"]}
+           (query/receipt-projection compiled "bafy-query" "bafy-result")))))
+
 (deftest query-rejects-ambient-or-stale-authority
   (is (= :invalid-query
          (:kotobase.query/reason
