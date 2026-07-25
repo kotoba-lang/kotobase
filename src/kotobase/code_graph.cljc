@@ -447,13 +447,14 @@
         identity (:identity identity-record)]
     (require-value some? identity-record :query-receipt/execution-identity-missing
                    {:execution-identity-cid execution-identity-cid})
-    (require-value #(contains? (set (:host-receipt-cids identity)) cid)
+    (require-value (fn [_] (= basis (:db-basis identity))) identity :query-receipt/basis-mismatch
+                   {:basis basis :identity-basis (:db-basis identity)})
+    (require-value (fn [_] (= policy-cid (:policy-cid identity))) identity :query-receipt/policy-mismatch
+                   {:policy-cid policy-cid :identity-policy-cid (:policy-cid identity)})
+    (require-value (fn [_] (contains? (set (:host-receipt-cids identity)) cid))
+                   identity
                    :query-receipt/not-bound-by-identity
                    {:execution-identity-cid execution-identity-cid :cid cid})
-    (require-value #(= basis (:db-basis identity)) :query-receipt/basis-mismatch
-                   {:basis basis :identity-basis (:db-basis identity)})
-    (require-value #(= policy-cid (:policy-cid identity)) :query-receipt/policy-mismatch
-                   {:policy-cid policy-cid :identity-policy-cid (:policy-cid identity)})
     (if-let [existing (store/-get s query-receipts cid)]
       (do (require-value #(= existing %) receipt :query-receipt/cid-record-conflict {:cid cid})
           existing)
