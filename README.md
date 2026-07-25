@@ -40,16 +40,6 @@ Neither previously cross-referenced the other two by name alone.
 
 ---
 
-## Stack topology
-
-kotobase's position in the stack (depends on kotoba, **never** the reverse —
-verified: runtime deps are `security` only, `kotoba` appears solely in the
-`:integration` test alias), and the decision to converge the datom plane's
-repo names on the `kotobase-*` prefix (retiring the need for the
-Disambiguation section above), are recorded in
-[`docs/ADR-stack-topology.md`](docs/ADR-stack-topology.md)
-(root authority: `com-junkawasaki/root` ADR-2607241100).
-
 ## Data model — an incidence merkle graph
 
 kotobase does not treat IPLD as a generic tree/DAG encoding — every IPLD
@@ -148,6 +138,25 @@ Two shapes of state cover both apps:
 ;; Cloud — same calls, persisted to kotobase.net (host injects `xrpc`, e.g. fetch)
 (def s (kb/kotobase-store (fn [method params] (call-kotobase! method params))))
 ```
+
+Production callers must select the production profile and supply the sealed
+store adapter. The profile also requires ABAC, information-flow, mTLS,
+hybrid-crypto, signed-capability, request-bound, approval, hardware-signing,
+remote-telemetry and recovery-readiness controls. Construction fails before
+any XRPC call if any control is absent:
+
+```clojure
+(kb/kotobase-store xrpc
+  {:deployment-profile :production
+   :sealed-store-options {:seal-fn seal!
+                          :ciphertext-digest-fn ciphertext-digest}
+   ;; plus the mandatory policy/evidence inputs documented by
+   ;; kotobase.kotobase/production-profile-violations
+   })
+```
+
+The one-argument form is a compatibility/development surface and carries no
+production confidentiality claim.
 
 The contract suite asserts `KotobaseStore ≡ LocalStore` over a faithful transport, so a
 live kotobase.net backend is correct iff it passes the same checks

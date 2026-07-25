@@ -13,6 +13,57 @@
             :expected-revision expected
             :current-revision actual}))
 
+(def transaction-keys
+  #{:tx-id :expected-revision :puts :deletes :appends})
+
+(def maximum-transaction-operations 1000)
+
+(defn- non-empty-name? [value]
+  (and (string? value) (seq value) (<= (count value) 1024)))
+
+(defn validate-transaction!
+  "Reject malformed/oversized transaction data before entering swap!, so a
+   Byzantine request can never partially mutate the reference store."
+  [{:keys [tx-id expected-revision puts deletes appends] :as request}]
+  (let [puts (or puts [])
+        deletes (or deletes [])
+        appends (or appends [])
+        operation-count (+ (count puts) (count deletes) (count appends))
+        valid-put? (fn [entry]
+                     (and (vector? entry) (= 3 (count entry))
+                          (non-empty-name? (nth entry 0))
+                          (non-empty-name? (nth entry 1))))
+        valid-delete? (fn [entry]
+                        (and (vector? entry) (= 2 (count entry))
+                             (non-empty-name? (nth entry 0))
+                             (non-empty-name? (nth entry 1))))
+        valid-append? (fn [entry]
+                        (and (vector? entry) (= 2 (count entry))
+                             (non-empty-name? (nth entry 0))
+                             (map? (nth entry 1))))
+        code (cond
+               (not= transaction-keys (set (keys request)))
+               :transaction/shape
+               (not (and (non-empty-name? tx-id) (<= (count tx-id) 256)))
+               :transaction/tx-id
+               (not (and (integer? expected-revision)
+                         (not (neg? expected-revision))))
+               :transaction/revision
+               (not (and (vector? puts) (every? valid-put? puts)))
+               :transaction/puts
+               (not (and (vector? deletes) (every? valid-delete? deletes)))
+               :transaction/deletes
+               (not (and (vector? appends) (every? valid-append? appends)))
+               :transaction/appends
+               (> operation-count maximum-transaction-operations)
+               :transaction/too-many-operations
+               :else nil)]
+    (when code
+      (throw (ex-info "IStore invalid transaction"
+                      {:type :kotobase.store/invalid-transaction
+                       :code code})))
+    request))
+
 (deftype LocalStore [state]
   st/IStore
   (-put [_ coll k v]
@@ -49,9 +100,7 @@
        :streams (select-keys (:streams current) streams)}))
 
   (-transact [_ {:keys [tx-id expected-revision puts deletes appends] :as request}]
-    (when-not (and (string? tx-id) (seq tx-id))
-      (throw (ex-info "IStore transaction requires a non-empty string tx-id"
-                      {:type :kotobase.store/invalid-transaction})))
+    (validate-transaction! request)
     (let [result (volatile! nil)]
       (swap! state
              (fn [current]
