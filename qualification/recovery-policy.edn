@@ -1,0 +1,12 @@
+{:kotobase.recovery-policy/version 1
+ :deployment-profile :production
+ :minimum-regions 2
+ :rto-limit-ms 600000
+ :rpo-limit-ms 300000
+ :backup {:encrypted-required true :immutable-required true
+          :digest-verified-required true}
+ :required-exercises #{:destructive-restore :corruption-repair :lost-key}
+ :lost-key {:must-fail-closed true
+            :recovery-path-required true}
+ :corruption-repair {:detection-required true :isolation-required true
+                     :rebuild-required true :digest-verified-required true}}

@@ -1,0 +1,5 @@
+{:kotobase.operations-policy/version 1
+ :deployment-profile :production
+ :required-evidence #{:slo :alert-routing :on-call :incident-playbook
+                      :secret-scan :rotation-drill}
+ :maximum-evidence-age-days 30}

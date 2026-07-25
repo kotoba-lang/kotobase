@@ -1,0 +1,8 @@
+{:kotobase.retention-policy/version 1
+ :deployment-profile :production
+ :destructive-actions #{:retention-pin/revoke :gc/apply}
+ :approval {:minimum-distinct-principals 2
+            :require-dry-run true
+            :require-legal-hold-check true
+            :require-recovery-receipt true
+            :require-audit-receipt true}}
