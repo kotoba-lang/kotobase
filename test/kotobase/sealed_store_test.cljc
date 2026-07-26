@@ -103,3 +103,19 @@
     (is (= :ok (st/-put store "vault" "one" {:secret true})))
     (is (= :encrypted (get-in @calls [0 1 :val :sealed/ciphertext 0])))
     (is (nil? (get-in @calls [0 1 :val :secret])))))
+
+(deftest production-profile-refuses-an-unsealed-store
+  (let [calls (atom 0)]
+    (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+                          #"incomplete production kotobase security profile"
+                          (kb/kotobase-store
+                           (fn [_ _] (swap! calls inc))
+                           {:deployment-profile :production})))
+    (is (zero? @calls))))
+
+(deftest production-profile-reports-every-missing-mandatory-control
+  (is (= #{:sealed-store :abac-policy :abac-attributes :information-flow
+           :transport-profile :crypto-policy :signed-capability
+           :request-bounds :approval :hardware-signing :remote-telemetry
+           :recovery-readiness}
+         (set (kb/production-profile-violations {})))))

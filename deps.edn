@@ -1,20 +1,12 @@
 {:paths ["src"]
- ;; Two surfaces live here. `kotobase.core` is the Datomic-shaped database API
- ;; — open/head/transact!/datoms/q/query/pull — on JVM (core.clj) and as
- ;; Promises for Workers (core.cljs), delegating to kotobase-engine over the
- ;; provider-neutral storage contract. The older IStore port + pure LocalStore +
- ;; KotobaseStore (which talks to kotobase.net through a HOST-INJECTED `xrpc`
- ;; fn — no HTTP client baked in, so it runs unchanged on JVM / cljs / a
- ;; Cloudflare Worker / kotoba-WASM) remain for compatibility; new persistence
- ;; targets `kotobase.core`.
+ ;; Zero-third-party-dep, all-`.cljc`: the IStore port + the pure LocalStore +
+ ;; the KotobaseStore (which talks to kotobase.net through a HOST-INJECTED `xrpc`
+ ;; fn — no HTTP client baked in, so it runs unchanged on JVM / cljs / a Cloudflare
+ ;; Worker / kotoba-WASM). The injecting host supplies the transport (`fetch`).
  :deps {io.github.kotoba-lang/security {:git/url "https://github.com/kotoba-lang/security.git"
                                         :git/sha "b4ff9d8a56263030bc92539b101e1eeb2dbfce39"}
         io.github.kotoba-lang/abi {:git/url "https://github.com/kotoba-lang/abi.git"
-                                   :git/sha "57ecc60694bc6bd3dd799db02a092f14fc10cd3e"}
-        ;; kotobase.core delegates to the engine, which speaks the
-        ;; provider-neutral storage contract. Concrete providers (postgres, d1,
-        ;; s3, ipfs, sqlite) are chosen by the host and passed in as `:storage`;
-        ;; none of them are dependencies here.
+                                   :git/sha "e63fb3086a41b5709e7f778467f8ce394dc391ee"}
         io.github.kotoba-lang/kotobase-storage
         {:local/root "../kotobase-storage"}
         io.github.kotoba-lang/kotobase-engine
