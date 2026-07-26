@@ -149,6 +149,25 @@ Two shapes of state cover both apps:
 (def s (kb/kotobase-store (fn [method params] (call-kotobase! method params))))
 ```
 
+Production callers must select the production profile and supply the sealed
+store adapter. The profile also requires ABAC, information-flow, mTLS,
+hybrid-crypto, signed-capability, request-bound, approval, hardware-signing,
+remote-telemetry and recovery-readiness controls. Construction fails before
+any XRPC call if any control is absent:
+
+```clojure
+(kb/kotobase-store xrpc
+  {:deployment-profile :production
+   :sealed-store-options {:seal-fn seal!
+                          :ciphertext-digest-fn ciphertext-digest}
+   ;; plus the mandatory policy/evidence inputs documented by
+   ;; kotobase.kotobase/production-profile-violations
+   })
+```
+
+The one-argument form is a compatibility/development surface and carries no
+production confidentiality claim.
+
 The contract suite asserts `KotobaseStore ≡ LocalStore` over a faithful transport, so a
 live kotobase.net backend is correct iff it passes the same checks
 (`MemStore ≡ DatomicStore` discipline).
