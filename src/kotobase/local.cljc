@@ -13,6 +13,41 @@
             :expected-revision expected
             :current-revision actual}))
 
+(def ^:private transaction-keys
+  #{:tx-id :expected-revision :puts :deletes :appends})
+
+(def ^:private max-transaction-operations 1000)
+
+(defn- valid-name? [value]
+  (and (string? value) (seq value)))
+
+(defn- valid-transaction? [{:keys [tx-id expected-revision puts deletes appends]
+                            :as request}]
+  (and (map? request)
+       (= transaction-keys (set (keys request)))
+       (valid-name? tx-id)
+       (nat-int? expected-revision)
+       (vector? puts)
+       (vector? deletes)
+       (vector? appends)
+       (<= (+ (count puts) (count deletes) (count appends))
+           max-transaction-operations)
+       (every? (fn [entry]
+                 (and (vector? entry) (= 3 (count entry))
+                      (valid-name? (nth entry 0))
+                      (valid-name? (nth entry 1))))
+               puts)
+       (every? (fn [entry]
+                 (and (vector? entry) (= 2 (count entry))
+                      (valid-name? (nth entry 0))
+                      (valid-name? (nth entry 1))))
+               deletes)
+       (every? (fn [entry]
+                 (and (vector? entry) (= 2 (count entry))
+                      (valid-name? (nth entry 0))
+                      (map? (nth entry 1))))
+               appends)))
+
 (deftype LocalStore [state]
   st/IStore
   (-put [_ coll k v]
@@ -49,8 +84,8 @@
        :streams (select-keys (:streams current) streams)}))
 
   (-transact [_ {:keys [tx-id expected-revision puts deletes appends] :as request}]
-    (when-not (and (string? tx-id) (seq tx-id))
-      (throw (ex-info "IStore transaction requires a non-empty string tx-id"
+    (when-not (valid-transaction? request)
+      (throw (ex-info "IStore transaction shape is invalid"
                       {:type :kotobase.store/invalid-transaction})))
     (let [result (volatile! nil)]
       (swap! state
