@@ -19,8 +19,7 @@ kotobase-storage       immutable blocks + conditional mutable refs
     +-- storage-sqlite (embedded/local)
     +-- storage-d1     (Cloudflare D1)
     +-- storage-s3     (S3 and R2)
-    +-- storage-ipfs   (IPFS and single-writer IPNS)
-    `-- storage-git    (bare git repository; update-ref as CAS)
+    `-- storage-ipfs   (IPFS and single-writer IPNS)
 ```
 
 A PostgreSQL or S3 deployment does not create or require a peer. “Peer” is an
@@ -45,8 +44,6 @@ Provider repositories:
 - `kotobase-storage-d1` (Cloudflare D1; SQLite profile, not PostgreSQL)
 - `kotobase-storage-s3` (including Cloudflare R2)
 - `kotobase-storage-ipfs` (IPFS blocks + single-writer IPNS refs)
-- `kotobase-storage-git` (bare git repository; no server and no SDK, git itself
-  is the storage engine)
 
 IPLD is the canonical encoding shared by every provider, not a provider.
 
@@ -59,17 +56,6 @@ general multi-writer compare-and-set primitive, so the IPFS adapter explicitly
 uses a single-writer profile. Multi-writer IPFS deployments must put a
 linearizable ref service in front of publication instead of pretending IPNS is
 CAS.
-
-Git needs no such caveat on a single filesystem: `git update-ref <ref> <new>
-<old>` is exactly the conditional publish `IRefStore` asks for, implemented by
-git with a lock file and fsync. Over NFS the git provider inherits git's own
-locking caveats unchanged. Blocks are committed into a tree under
-`refs/kotobase/blocks` rather than left as loose objects, because `git gc`
-prunes what no ref reaches — writing git objects is not the same thing as using
-git as storage. The provider drives git through plumbing and a scratch index
-(no worktree, bare repo), so it requires a git binary and does not run inside a
-Worker. Its decisions and verified boundary are recorded in
-`90-docs/adr/2607262000-kotobase-storage-git-backend.edn`.
 
 `kotobase-server` contains a migration bridge from this contract to its older
 `BlockStore`/`HeadStore` ports. Provider code targets only `kotobase-storage`.
