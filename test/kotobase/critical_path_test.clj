@@ -6,7 +6,14 @@
   reads`), which reads as though the plane needs it. Structurally it does not:
   the core has no IPFS reference and no dependency on the IPFS adapter. That
   is worth locking in rather than restating, because a positioning claim is
-  the kind that stops being true without anything failing."
+  the kind that stops being true without anything failing.
+
+  `.clj`, not `.cljc`, and deliberately: this walks the source TREE
+  (`clojure.java.io`, `file-seq`, `slurp`) to make a claim about the
+  repository, which is a build-time question with no ClojureScript meaning.
+  As `.cljc` it linted for both platforms, where `file-seq` and `slurp` do not
+  exist -- so `clojure -M:lint` failed and took CI red from 2026-07-30, while
+  the 80 tests underneath it kept passing. The extension was the bug."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.test :refer [deftest is]]))
