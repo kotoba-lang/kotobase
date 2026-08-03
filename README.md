@@ -10,32 +10,60 @@ boundary. See [`docs/storage-architecture.md`](docs/storage-architecture.md).
 The document/stream `kotobase.store/IStore` section below is a legacy
 compatibility surface; new database backends must not target it.
 
-**The datom database of the kotoba stack — the _Datomic_ to kotoba's _Clojure_**
-(ADR-2607032500). kotobase persists, indexes, Datalog-queries, and
-time-versions the datom model that the [**`kotoba`**](https://github.com/kotoba-lang/kotoba)
-language defines (`kotoba.kgraph`'s `[e a v]`), and is built _on_ kotoba — it
-depends on the language, never the reverse. Like Datomic on Clojure: the db
-value is kotoba data, the query is kotoba data.
+**The datom database of the kotoba stack.** kotobase persists, indexes,
+queries, and time-versions the datom model that the
+[**`kotoba`**](https://github.com/kotoba-lang/kotoba) language defines
+(`kotoba.kgraph`'s `[e a v]`), and is built _on_ kotoba — it depends on the
+language, never the reverse. The db value is kotoba data; the query is kotoba
+data.
 
-**Datomic reimagined for the distributed web.** Where Datomic centralizes on
-a single transactor peer over SQL/DynamoDB storage, kotobase is
-content-addressed and network-native from the ground up: facts are
-blake3/CIDv1 blocks (`ipld`/`multiformats`/`dag-cbor`), the index structure is
-a content-addressed Prolly Tree instead of a B-tree, history is an immutable
-commit DAG rather than a single log, and the "peer" is an edge runtime
-(`kotobase-cljc-worker` / kotobase.net) reachable over CACAO-authenticated
-HTTP rather than a JVM process with a direct storage connection. Same
-datom/EAVT/Datalog model as Datomic, but the storage and replication substrate
-is the distributed web (IPFS-shaped content addressing) instead of a
-single-writer database.
+**What kotobase is based on is the datom plane, not Datomic**
+(ADR-2608039970). Two things sit underneath everything here, and neither is
+Datomic:
+
+- **content-addressed blocks + conditional refs + large objects** — facts are
+  CIDv1 blocks (`ipld`/`multiformats`/`dag-cbor`), the index structure is a
+  content-addressed Prolly Tree instead of a B-tree, history is an immutable
+  commit DAG rather than a single log. PostgreSQL, S3/R2, IPFS/IPNS and D1 are
+  provider adapters at that boundary — see
+  [`docs/storage-architecture.md`](docs/storage-architecture.md). IPLD is the
+  canonical encoding in every deployment.
+- **the datom (triple/EAV) itself**, immutable and content-addressed — the
+  logical model every query surface shares. It is the right base for a stack
+  serving many protocols because a relational row, an RDF quad, a property
+  graph edge and a JSON document all reduce to triples, and the reverse does
+  not hold losslessly.
+
+The Datomic-shaped API (`kotobase.core`'s `q`/`query`/`pull`, and
+`kotobase.datomic`'s EDN transaction and query grammar) is **one surface over
+that plane, alongside SQL, openCypher, SPARQL, GraphQL and Gremlin** — a good
+one, and the right choice when the caller's language is already
+Datalog-shaped. It is not the layer the others are built on, and Datalog is
+not the IR they are translated into: see
+[`kotobase-query`](https://github.com/kotoba-lang/kotobase-query)'s
+`materialize` + access-path contract.
+
+**Why the distinction is worth stating.** "kotoba : kotobase = Clojure :
+Datomic" (ADR-2607032500) is a naming and terminology decision — where the
+`spo`/`pso`/`pos`/`ocp` vocabulary comes from, why the repos are named as they
+are — and it remains accurate. What it is not is a design premise. Read as one,
+it produced a stack in which every query protocol was expected to route
+through Datalog, which is not what the surfaces that exist actually do.
 
 "kotobase" is the umbrella over the datom-plane repos (bottom-up): content
 addressing (`ipld`/`multiformats`/`dag-cbor`) → content-addressed storage
 (`prolly-tree`) → immutable commit chain / time (`commit-dag`) → 4 covering
-indexes (`quad-store`) → Datalog query (`kqe`) → transact/datoms/q/pull
+indexes (`arrangement`, query layer in `datalog`) → transact/datoms/q/pull
 (`kotobase-engine`) → CACAO client (`kotobase-client`) → edge runtime
 (`kotobase-cljc-worker` = the kotobase.net PDS). **This repo (`kotobase-clj`) is
 kotobase's client seam** — the `IStore` port below.
+
+Query languages sit *beside* each other on top of the indexes rather than in
+that column: `kotobase-query`'s `materialize` + access paths is what they
+share, and Datalog (`datalog.core`, `kotobase.core/q`), SQL
+(`org-postgresql-wire`), openCypher, SPARQL, GraphQL and Gremlin are peers
+over it (ADR-2608039970). `quad-store` and `kqe` are the former names of
+`arrangement` and of the query layer now in `datalog`.
 
 **Disambiguation (ADR-2607050900):** this repo, [`kotobase-client`](https://github.com/kotoba-lang/kotobase-client),
 and [`kotoba-client`](https://github.com/kotoba-lang/kotoba-client) are three
