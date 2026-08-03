@@ -2,6 +2,14 @@
 
 [![CI](https://github.com/kotoba-lang/kotobase/actions/workflows/ci.yml/badge.svg)](https://github.com/kotoba-lang/kotobase/actions/workflows/ci.yml)
 
+The primary API is now `kotobase.core`: `open`, `transact!`, `datoms`, `q`,
+`query`, and `pull` over an injected `kotobase-storage` backend. PostgreSQL,
+S3/R2, and IPFS/IPNS are provider adapters at the immutable-block/mutable-ref
+boundary. See [`docs/storage-architecture.md`](docs/storage-architecture.md).
+
+The document/stream `kotobase.store/IStore` section below is a legacy
+compatibility surface; new database backends must not target it.
+
 **The datom database of the kotoba stack — the _Datomic_ to kotoba's _Clojure_**
 (ADR-2607032500). kotobase persists, indexes, Datalog-queries, and
 time-versions the datom model that the [**`kotoba`**](https://github.com/kotoba-lang/kotoba)

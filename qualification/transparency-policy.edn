@@ -1,0 +1,12 @@
+{:kotobase.transparency-policy/version 1
+ :required-witnesses #{:operations :independent-auditor}
+ :checkpoint {:append-only true :rollback-forbidden true
+              :key-epoch-required true}
+ :classes
+ {:security {:minimum-ms 220752000000}
+  :business {:minimum-ms 31536000000}
+  :ephemeral {:minimum-ms 2592000000}}
+ :key-rotation {:overlap-required true
+                :retire-only-after-newer-checkpoint true}
+ :retention {:legal-hold-fail-closed true
+             :encrypted-receipts-use-crypto-shredding true}}

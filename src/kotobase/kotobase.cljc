@@ -292,15 +292,22 @@
 
 (defn kotobase-store
   "A store backed by kotobase.net through the injected `xrpc` fn
-  `(fn [method params] -> result)`."
+  `(fn [method params] -> result)`.
+
+  `:deployment-profile :production` is fail-closed: a production remote store
+  cannot be constructed without `:sealed-store-options`. The one-argument
+  form and non-production profiles remain available for local compatibility
+  and tests, but they make no production confidentiality claim."
   ([xrpc] (->KotobaseStore xrpc))
   ([xrpc {:keys [transactional? abac-policy information-flow-context
                  transport-profile crypto-required? capability-required?
                  hardware-signing-required? remote-telemetry-required?
                  approval-required? request-bounds-required?
-                 recovery-required? sealed-store-options]
+                 recovery-required? sealed-store-options deployment-profile]
           :as options}]
-   (let [_ (when recovery-required? (enforce-recovery-readiness! options))
+   (let [_ (when (= :production deployment-profile)
+             (enforce-production-profile! options))
+         _ (when recovery-required? (enforce-recovery-readiness! options))
          xrpc (if sealed-store-options
                 (sealed-store/wrap-xrpc xrpc sealed-store-options)
                 xrpc)

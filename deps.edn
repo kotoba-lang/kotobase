@@ -1,12 +1,26 @@
 {:paths ["src"]
- ;; Zero-third-party-dep, all-`.cljc`: the IStore port + the pure LocalStore +
- ;; the KotobaseStore (which talks to kotobase.net through a HOST-INJECTED `xrpc`
- ;; fn — no HTTP client baked in, so it runs unchanged on JVM / cljs / a Cloudflare
- ;; Worker / kotoba-WASM). The injecting host supplies the transport (`fetch`).
+ ;; Two surfaces live here. `kotobase.core` is the Datomic-shaped database API
+ ;; — open/head/transact!/datoms/q/query/pull — on JVM (core.clj) and as
+ ;; Promises for Workers (core.cljs), delegating to kotobase-engine over the
+ ;; provider-neutral storage contract. The older IStore port + pure LocalStore +
+ ;; KotobaseStore (which talks to kotobase.net through a HOST-INJECTED `xrpc`
+ ;; fn — no HTTP client baked in, so it runs unchanged on JVM / cljs / a
+ ;; Cloudflare Worker / kotoba-WASM) remain for compatibility; new persistence
+ ;; targets `kotobase.core`.
  :deps {io.github.kotoba-lang/security {:git/url "https://github.com/kotoba-lang/security.git"
                                         :git/sha "b4ff9d8a56263030bc92539b101e1eeb2dbfce39"}
         io.github.kotoba-lang/abi {:git/url "https://github.com/kotoba-lang/abi.git"
-                                   :git/sha "57ecc60694bc6bd3dd799db02a092f14fc10cd3e"}}
+                                   :git/sha "57ecc60694bc6bd3dd799db02a092f14fc10cd3e"}
+        ;; kotobase.core delegates to the engine, which speaks the
+        ;; provider-neutral storage contract. Concrete providers (postgres, d1,
+        ;; s3, ipfs, sqlite) are chosen by the host and passed in as `:storage`;
+        ;; none of them are dependencies here.
+        io.github.kotoba-lang/kotobase-storage
+        {:git/url "https://github.com/kotoba-lang/kotobase-storage.git"
+         :git/sha "5cbf6c5107ad49c0daac14dca118c837053de0d6"}
+        io.github.kotoba-lang/kotobase-engine
+        {:git/url "https://github.com/kotoba-lang/kotobase-engine.git"
+         :git/sha "bdc057bef0bc88b289f6f24e086a50884ee363c4"}}
  :aliases
  {:cljs-test {:extra-paths ["test"]
               :extra-deps {org.clojure/clojurescript {:mvn/version "1.11.132"}}}

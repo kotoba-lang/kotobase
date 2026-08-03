@@ -53,16 +53,35 @@
                   :purpose (get-in query [:scope :purpose])}}))
 
 (defn execute!
-  "Execute only a compiled query through EVALUATE!. The returned provenance is
-  ready to bind into an execution identity; raw query execution is unavailable
-  from this namespace."
-  [evaluate! compiled]
+  "Execute only a compiled query through EVALUATE!, and record that it ran.
+
+  RECEIPT! is required, not optional. `kotobase.admission` already refuses to
+  run an effect until its `audit!` returns `:audit/durable? true`, so `who did
+  this` is answerable; without the same requirement here, `who read this` is
+  not — a query could be admitted, evaluated, and leave nothing behind. The
+  gate cannot know the query and result CIDs itself (the host owns the
+  canonical codec, see `receipt-projection`), so it asks the host to write the
+  receipt and refuses the rows unless the host says it is durable.
+
+  The returned provenance is ready to bind into an execution identity; raw
+  query execution is unavailable from this namespace."
+  [evaluate! receipt! compiled]
   (when-not (and (map? compiled) (= #{:query :decision :provenance} (set (keys compiled))))
     (reject! :invalid-compiled-query {}))
   (when-not (ifn? evaluate!) (reject! :missing-evaluator {}))
+  (when-not (ifn? receipt!) (reject! :missing-receipt-sink {}))
   (let [rows (evaluate! (:query compiled) (:decision compiled))]
     (when-not (vector? rows) (reject! :invalid-result {}))
-    {:rows rows :provenance (:provenance compiled)}))
+    (let [ack (receipt! {:compiled compiled :row-count (count rows)})]
+      ;; the same shape admission requires of its audit: a sink that says
+      ;; nothing, or says it did not persist, has not recorded the read
+      (when-not (and (map? ack) (true? (:receipt/durable? ack))
+                     (string? (:receipt/cid ack)) (seq (:receipt/cid ack)))
+        (reject! :receipt-not-durable {:ack ack}))
+      {:rows rows
+       :provenance (assoc (:provenance compiled)
+                          :receipt-cid (:receipt/cid ack)
+                          :row-count (count rows))})))
 
 (defn receipt-projection
   "Return the non-sensitive, immutable-fact projection a host must bind into
