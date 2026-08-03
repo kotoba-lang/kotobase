@@ -14,8 +14,13 @@
 
 (def options
   {:seal-fn good-seal
+   :unseal-fn (fn [sealed]
+                (get-in sealed [:sealed/private :plaintext]))
    :ciphertext-digest-fn
    (fn [[tag digest]] (when (= :encrypted tag) (str "digest:" digest)))})
+
+(defn roundtrip-seal [plaintext]
+  (assoc (good-seal plaintext) :sealed/private {:plaintext plaintext}))
 
 (deftest plaintext-never-reaches-remote-write
   (let [calls (atom [])
@@ -103,3 +108,43 @@
     (is (= :ok (st/-put store "vault" "one" {:secret true})))
     (is (= :encrypted (get-in @calls [0 1 :val :sealed/ciphertext 0])))
     (is (nil? (get-in @calls [0 1 :val :secret])))))
+
+(deftest sealed-read-opens-only-after-envelope-verification
+  (let [remote (sealed/wrap-xrpc
+                (fn [method _]
+                  (case method
+                    :get (roundtrip-seal {:secret "value"})
+                    :read [(assoc (roundtrip-seal {:tx-data [[:db/add 1 :x 2]]})
+                                  :seq 7)]))
+                options)]
+    (is (= {:secret "value"} (remote :get {:coll "c" :key "k"})))
+    (is (= [{:tx-data [[:db/add 1 :x 2]] :seq 7}]
+           (remote :read {:stream "s" :since 0})))))
+
+(deftest plaintext-and-tampered-remote-reads-fail-closed
+  (doseq [response [{:secret "plaintext"}
+                    (assoc (roundtrip-seal {:secret true})
+                           :sealed/ciphertext-digest "wrong")]]
+    (let [remote (sealed/wrap-xrpc (fn [_ _] response) options)]
+      (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+                            #"kotobase sealed read denied"
+                            (remote :get {:coll "c" :key "k"}))))))
+
+(deftest snapshot-and-transaction-receipt-open-value-bearing-members
+  (let [remote (sealed/wrap-xrpc
+                (fn [method _]
+                  (case method
+                    :snapshot {:revision 3
+                               :docs {"c" {"k" (roundtrip-seal {:v 1})}}
+                               :streams {"s" [(assoc (roundtrip-seal {:v 2})
+                                                     :seq 9)]}}
+                    :transact {:tx-id "tx" :revision 4
+                               :appends [["s" (assoc (roundtrip-seal {:v 3})
+                                                      :seq 10)]]}))
+                (assoc options :seal-fn roundtrip-seal))]
+    (is (= {:revision 3 :docs {"c" {"k" {:v 1}}}
+            :streams {"s" [{:v 2 :seq 9}]}}
+           (remote :snapshot {:collections ["c"] :streams ["s"]})))
+    (is (= {:tx-id "tx" :revision 4 :appends [["s" {:v 3 :seq 10}]]}
+           (remote :transact {:tx-id "tx" :expected-revision 3
+                              :puts [] :deletes [] :appends []})))))
