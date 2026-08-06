@@ -255,6 +255,27 @@ Use `promise-runtime` in ClojureScript; other completion models can inject the
 same `resolve`/`then`/`all` algebra. CI compiles and executes this path under
 Node as real ClojureScript rather than relying only on the synchronous JVM test.
 
+## Comparing this shape with OrbitDB / Ceramic / ActorDB
+
+[`capability-bench/`](capability-bench/) implements the OrbitDB
+(Merkle-CRDT oplog), Ceramic (per-stream event logs + columnar projection) and
+ActorDB (actor-per-shard, single writer per shard) architectures behind one
+capability contract, next to kotobase's own Prolly/commit-DAG shape, and
+replays one deterministic datom workload into all four. The block layer is
+real — genuine DAG-CBOR/CIDv1 through `io-ipld` and the real `prolly-tree` and
+`kotoba-lang/crdt` libraries — so the block and byte counters are properties
+of the architectures rather than of a simulation. The three foreign
+architectures are re-implementations of their published *shapes*, not their
+code; there is no libp2p, no `ceramic-one` and no network, and
+`capability-bench/README.md` states exactly what that does and does not
+license you to conclude.
+
+```bash
+cd capability-bench && npm install && npm run setup
+nbb --classpath "$(nbb setup.cljs --print-classpath)" verify.cljs   # all four must agree
+nbb --classpath "$(nbb setup.cljs --print-classpath)" run.cljs --fvm
+```
+
 ## Consumers
 
 The cloud API workers [local-murakumo](https://github.com/gftdcojp/local-murakumo)
