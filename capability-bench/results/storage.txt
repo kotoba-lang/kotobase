@@ -20,13 +20,13 @@ RTT     point-read                transaction               range-scan
 
 === 3. client-side encryption (AES-256-GCM) ===
 block population        mean bytes   overhead/blk  overhead %   encrypt ms   decrypt ms
-index blocks            12225.47     28            0.23         0.25         0.07
-definition blocks       1638.28      28            1.71         0.04         0.03
-throughput MB/s: 31.55
+index blocks            12225.47     28            0.23         0.21         0.03
+definition blocks       1638.28      28            1.71         0.02         0.02
+throughput MB/s: 56.23
 content addressing: {:blocks 430, :convergent-unique-after-two-builds 430, :random-unique-after-two-builds 860, :random-duplicate-factor 2}
 equality leakage: {:tenant-a-blocks 430, :tenant-b-blocks 151, :shared-block-addresses 151, :shared-pct 35.12, :note "with convergent encryption these are byte-identical objects; the server learns the overlap"}
 opaque index amplification: {:plaintext-prefix {:requests 5, :rows 496}, :attribute-range {:requests 14, :rows 4000}, :request-factor 2.8, :row-factor 8.06}
-point read with encryption: {:decrypt-ms 0.39, :encrypt-ms 0, :bytes-put 0, :bytes-get 24974.92, :hops 2, :requests-put 0, :ms 60.94, :cache-hits 0, :requests-get 2.04}
+point read with encryption: {:decrypt-ms 0.4, :encrypt-ms 0, :bytes-put 0, :bytes-get 24974.92, :hops 2, :requests-put 0, :ms 38.67, :cache-hits 0, :requests-get 2.04}
 
 === 4. CID identity schemes: % of definitions whose CID changes ===
 perturbation            source-text   sexpr-canonical   checked-KIR
@@ -38,12 +38,12 @@ semantic-change-10pct-hubs 10            10                100
 definition rename, CID SET preserved?  sexpr-canonical=false  checked-KIR=true
 
 === 5. data lake: range aggregate over one column ===
-columnar   {:chunks-total 8, :chunks-read 1, :chunks-skipped 7, :rows-scanned 512, :matches 194, :requests-get 2, :hops 2, :ms 6.18}
-avet index {:rows-scanned 4000, :matches 194, :requests-get 16, :hops 2, :ms 154.32}
-lake build {:requests-put 46, :bytes-put 404142, :ms 396.23}
+columnar   {:chunks-total 8, :chunks-read 1, :chunks-skipped 7, :rows-scanned 512, :matches 194, :requests-get 2, :hops 2, :ms 5.23}
+avet index {:rows-scanned 4000, :matches 194, :requests-get 16, :hops 2, :ms 108.12}
+lake build {:requests-put 46, :bytes-put 404142, :ms 281.82}
 
 === 6. security cost ===
-sha256 0.04 ms/block; full CID assembly 0.71 ms/block (430 blocks) — the gap is base32 multibase encoding in pure cljs, not hashing
+sha256 0.02 ms/block; full CID assembly 0.45 ms/block (430 blocks) — the gap is base32 multibase encoding in pure cljs, not hashing
 single-byte tamper detected: true
 cross-tenant equality visible to a convergent-encryption server: 35.12% of tenant A's blocks
 

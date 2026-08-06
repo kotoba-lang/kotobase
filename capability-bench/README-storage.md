@@ -73,7 +73,10 @@ RTT it is the difference between a 1.6 s scan and a 200 ms scan.
 
 The block cache is the other lever: 1 000 cached blocks turn 2.04 requests per
 point read into 0.74 — a 64% cut, because the upper tree levels are shared by
-every descent and are exactly what a small cache holds.
+every descent and are exactly what a small cache holds. Note this is measured
+over 50 point reads against a **cold** cache, so it includes the warming
+misses; a steady-state cache would do better, and this figure is the
+conservative one.
 
 ## 2. Client-side encryption (AES-256-GCM)
 
@@ -81,10 +84,10 @@ Size and CPU, on two real block populations:
 
 | block population | mean size | overhead/block | overhead % | encrypt | decrypt |
 |---|---|---|---|---|---|
-| index blocks | 12 225 B | 28 B | **0.23%** | 0.25 ms | 0.07 ms |
-| definition blocks | 1 638 B | 28 B | **1.71%** | 0.04 ms | 0.03 ms |
+| index blocks | 12 225 B | 28 B | **0.23%** | 0.21 ms | 0.03 ms |
+| definition blocks | 1 638 B | 28 B | **1.71%** | 0.02 ms | 0.02 ms |
 
-Throughput 31.6 MB/s in this runtime. The 28 bytes (12-byte nonce + 16-byte
+Throughput 56.2 MB/s in this runtime. The 28 bytes (12-byte nonce + 16-byte
 GCM tag) are **per block and fixed**, so the cost of encryption is a direct
 function of block granularity — which ties straight back to the granularity
 result in `README-semantic.md`. Per-node chunking at 14.9 blocks per definition
@@ -125,7 +128,7 @@ client takes the whole attribute range and filters locally:
 | opaque attribute range | 14 | 4 000 |
 | **factor** | **2.8×** | **8.06×** |
 
-The cipher costs 0.07 ms per block. The *opacity* costs 8× the bytes. When
+The cipher costs 0.03 ms per block. The *opacity* costs 8× the bytes. When
 encryption looks expensive it is almost never the AES.
 
 ## 3. Identity schemes — what leaves a CID unchanged
@@ -145,8 +148,9 @@ Two things fall out.
 
 **The naive reading of "S-expressions are the database" is not enough.**
 Canonicalising the S-expression as data fixes formatting — 100% → 0% — but
-still carries every name, so renaming a local invalidates 79% of the corpus
-and renaming the definitions invalidates all of it. Only the checked-KIR
+still carries every name, so renaming a local invalidates 79.3% of the corpus
+— that is every definition that contains a `let`, the rest having no local to
+rename — and renaming the definitions invalidates all of it. Only the checked-KIR
 identity, which alpha-normalises binders to de Bruijn indices and drops the
 definition's own name, is stable: **renaming every definition and every call
 site in the corpus changes zero CIDs, and the CID set is preserved exactly.**
@@ -164,11 +168,11 @@ The same range aggregate over one attribute, two layouts, same block store:
 
 | | requests | rows scanned | chunks skipped | hops | ms |
 |---|---|---|---|---|---|
-| columnar + zone maps | **2** | **512** | 7 of 8 | 2 | **6.2** |
-| AVET Prolly index | 16 | 4 000 | — | 2 | 154 |
+| columnar + zone maps | **2** | **512** | 7 of 8 | 2 | **5.2** |
+| AVET Prolly index | 16 | 4 000 | — | 2 | 108 |
 
 Columnar wins on every axis that matters for analytics: **8× fewer requests,
-7.8× fewer rows, 25× faster**, because the footer's min/max lets it skip 7 of 8
+7.8× fewer rows, 21× faster**, because the footer's min/max lets it skip 7 of 8
 row groups before reading anything. Building it cost 46 PUTs and 404 KB.
 
 So: **the datom plane does hold up as a lake, but not in its transactional
@@ -181,13 +185,13 @@ is bandwidth and request count, not latency.
 
 | | measured |
 |---|---|
-| sha256 of one block | 0.04 ms |
-| full CID assembly (hash + multibase) | **0.71 ms** |
+| sha256 of one block | 0.02 ms |
+| full CID assembly (hash + multibase) | **0.45 ms** |
 | single-byte tamper detected | yes (CID mismatch) |
 | cross-tenant equality visible under convergent encryption | 35.12% of blocks |
 | block-address equality leak under plaintext addressing | 100% (the address *is* the plaintext hash) |
 
-**The verification cost is 18× the hash, and none of that is cryptography.**
+**The verification cost is ~22× the hash, and none of that is cryptography.**
 It is base32 multibase encoding implemented in pure ClojureScript. Content
 verification is not expensive; this particular CID *string* assembly is, and it
 is an optimisation target rather than an argument against verifying.
@@ -205,9 +209,11 @@ the *cost* of doing it, and the *leakage* that remains after doing it.
   packed-block layout could cut the request count further, and this benchmark
   does not measure that.
 - **Hops are declared** from the algorithm's structure, not detected.
-- **Milliseconds are interpreter-bound** (nbb/SCI). The AES and sha256 figures
-  are Node's native implementations and are closer to real, but throughput
-  (31.6 MB/s) is still bounded by how this harness feeds them.
+- **Milliseconds are interpreter-bound** (nbb/SCI) and move between runs by
+  tens of percent; every counter above is byte-for-byte reproducible, the
+  timings are not. The AES and sha256 figures are Node's native
+  implementations and are closer to real, but throughput (56.2 MB/s) is still
+  bounded by how this harness feeds them.
 - **The key-management plane is not measured** — key derivation, rotation,
   per-tenant hierarchies and revocation are all out of scope. Only cipher work
   and its structural consequences are.

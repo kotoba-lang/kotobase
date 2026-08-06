@@ -15,6 +15,11 @@
   to the tree, and it is the one that quietly removes server-side integrity:
   the store holds ciphertext under a plaintext CID it cannot recompute.
 
+  Cross-dataset equality leakage is measured in `run-storage.cljs` rather than
+  here: within one store the blocks are already deduplicated, so counting
+  duplicates inside it can only ever return zero. The question that has an
+  answer is how many block addresses two independent tenants share.
+
   The third row is worse than it looks. A fresh nonce per write means encoding
   the same logical node twice yields two different addresses, so two replicas
   building the same data disagree about the root. Content addressing stops
@@ -61,19 +66,7 @@
      :random-unique-after-two-builds rand-unique
      :convergent-duplicate-factor (/ (double conv-unique) n)
      :random-duplicate-factor (/ (double rand-unique) n)
-     :encrypt-throughput-mb-s (/ (/ plain-bytes 1048576.0) (/ (- t2 t0) 2000.0))}))
-
-(defn equality-leakage
-  "With convergent encryption an observer can test whether two stored objects
-  hold the same plaintext, and can confirm any plaintext it can guess. The
-  measurable part is how much equality structure the store exposes: how many
-  objects fall into groups of size > 1."
-  [blocks]
-  (let [groups (frequencies (map mf/cidv1-raw blocks))
-        dup-groups (filter #(> (val %) 1) groups)]
-    {:objects (count blocks)
-     :distinct-plaintexts (count groups)
-     :groups-with-duplicates (count dup-groups)
-     :objects-in-duplicate-groups (reduce + 0 (map val dup-groups))
-     :leaked-equality-pct (* 100.0 (/ (double (reduce + 0 (map val dup-groups)))
-                                      (max 1 (count blocks))))}))
+     ;; from the FIRST convergent pass only, which is exactly `blocks` once.
+     ;; An earlier version divided the span covering three passes by a
+     ;; two-pass constant and understated this by 1.5x.
+     :encrypt-throughput-mb-s (/ (/ plain-bytes 1048576.0) (/ (- t1 t0) 1000.0))}))

@@ -293,7 +293,7 @@
                                              :mean-block-bytes
                                              (r2 (/ (:plaintext-bytes enc-analysis-defs)
                                                     (double (:blocks enc-analysis-defs)))))
-          :equality-leakage leakage
+          :cross-tenant-equality leakage
           :opaque-index-amplification
           {:plaintext-prefix {:requests (:requests-get plain-m)
                               :rows (count plain-hits)}
