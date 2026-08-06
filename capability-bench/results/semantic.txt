@@ -1,0 +1,59 @@
+corpus (generated): {:nodes-mean 55.86, :definitions 2000, :effect-ratio 0.08, :library-size 100, :nodes-total 111729, :depth-mean 8.12, :fan-out-parameter 8, :nodes-p90 79, :nodes-median 57, :dep-shape :library, :depth-max 11}
+corpus (real .kotoba, for comparison): {:source "all *.kotoba in kotoba-lang/crdt + kotoba-lang/hash, 2026-08-06", :definitions 72, :nodes {:mean 49.5, :median 40, :p90 103, :total 3566}, :depth {:mean 7.2, :max 15}}
+lowered 2000 definitions in 28767 ms via kotoba.codebase.semantic-code
+
+=== block granularity ===
+strategy          blocks    blk/def   bytes       B/def     hydrate-blk  edit-blocks  edit-bytes
+per-node          29795     14.9      4266257     2133.13   47.13        11659        1853249
+per-definition    2002      1         3258449     1629.22   1            1717         2841138
+semantic-chunk    16235     8.12      3826478     1913.24   8.27         8691         2113416
+
+=== query plane: 'which definitions declare an effect' ===
+index       {:via :index, :results 155, :blocks-read 2}
+object-scan {:via :full-object-scan, :results 155, :blocks-read 4000}
+propagation from 20 hub definitions   {:affected 1999, :blocks-read 4032}
+propagation from 20 leaf definitions  {:affected 20, :blocks-read 40}
+
+=== namespace commit ===
+names=2000
+  after 1717 definitions changed: flat second commit=98058B  prolly-tree second commit=150957B
+  after 1 leaf definition changed:  flat second commit=98058B  prolly-tree second commit=19776B
+
+=== evaluation plane ===
+cold                  {:misses 1263, :hits 1117, :effectful 775, :ms 5979.55}
+warm after leaf edit  {:target :leaf, :misses 14, :hits 222, :effectful 14, :receipts 14, :ms 364.84}
+warm after hub edit   {:target :hub, :misses 1712, :hits 1087, :effectful 1169, :receipts 1169, :ms 7938.17}
+
+=== CID cache reuse vs dependency shape ===
+dep-shape  edited   lands on  cids changed   invalidation   cache reuse
+library    1        leaf      1/150          1x             0.99
+library    1        random    1/150          1x             0.99
+library    1        hub       150/150        150x           0
+library    3        leaf      3/150          1x             0.98
+library    3        random    150/150        50x            0
+library    3        hub       150/150        50x            0
+library    15       leaf      15/150         1x             0.9
+library    15       random    150/150        10x            0
+library    15       hub       150/150        10x            0
+uniform    1        leaf      1/150          1x             0.99
+uniform    1        random    1/150          1x             0.99
+uniform    1        hub       150/150        150x           0
+uniform    3        leaf      3/150          1x             0.98
+uniform    3        random    150/150        50x            0
+uniform    3        hub       150/150        50x            0
+uniform    15       leaf      15/150         1x             0.9
+uniform    15       random    150/150        10x            0
+uniform    15       hub       150/150        10x            0
+chain      1        leaf      1/150          1x             0.99
+chain      1        random    54/150         54x            0.64
+chain      1        hub       150/150        150x           0
+chain      3        leaf      3/150          1x             0.98
+chain      3        random    150/150        50x            0
+chain      3        hub       150/150        50x            0
+chain      15       leaf      15/150         1x             0.9
+chain      15       random    150/150        10x            0
+chain      15       hub       150/150        10x            0
+
+main corpus (library) cid reuse after editing 10%: 0.14  (1717 of 2000 definitions changed identity)
+
+wrote results/semantic.edn

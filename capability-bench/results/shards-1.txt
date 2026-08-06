@@ -1,0 +1,49 @@
+workload: {:seed 20260806, :entities 2000, :datoms 10000, :load-txns 8, :update-txns 100, :total-t 108}
+running actordb …
+   11.12 puts/txn, 1023 blocks stored
+
+=== capability matrix ===
+capability               | actordb
+analytical-projection    | -      
+cid-verified-read        | yes    
+conditional-ref          | yes    
+covering-index           | yes    
+cross-shard-txn          | yes    
+deterministic-execution  | -      
+global-snapshot          | yes    
+immutable-blocks         | yes    
+interest-sync            | -      
+linearizable-txn         | yes    
+log-replay-sync          | -      
+multi-writer-merge       | -      
+range-scan               | yes    
+structural-delta-sync    | yes    
+time-travel              | yes    
+verifiable-index         | yes    
+
+=== write cost per steady-state transaction ===
+backend               puts     put-bytes   gets     get-bytes   msgs   ms
+actordb               11.12    107820.04   17.97    176280.25   3      252.452
+
+=== query cost per op ===
+-- point-read
+actordb               2.02      26500.77     31.234    index                   Σshards-queried=100
+-- find-by-value
+actordb               2.7       36479.84     31.268    index-fanout            Σshards-queried=50
+-- range-scan
+actordb               8         104709       61.408    index-fanout            Σshards-queried=20
+-- snapshot-read
+actordb               3.05      27104.95     23.002    db-root-history         
+
+=== replica sync ===
+-- replica-sync-since-load
+actordb               blocks-read=83        entries=396       ms=765.419      structural-delta-per-shard
+-- replica-sync-from-empty
+actordb               blocks-read=71        entries=20200     ms=595.464      structural-delta-per-shard
+-- replica-sync-interest-scoped
+actordb               blocks-read=83        entries=396       ms=697.577      structural-delta-per-shard
+
+=== stored state ===
+actordb               blocks=1023       bytes=12894778
+
+wrote results/shards-1.edn

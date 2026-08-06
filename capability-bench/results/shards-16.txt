@@ -1,0 +1,49 @@
+workload: {:seed 20260806, :entities 2000, :datoms 10000, :load-txns 8, :update-txns 100, :total-t 108}
+running actordb …
+   6.21 puts/txn, 1231 blocks stored
+
+=== capability matrix ===
+capability               | actordb
+analytical-projection    | -      
+cid-verified-read        | yes    
+conditional-ref          | yes    
+covering-index           | yes    
+cross-shard-txn          | yes    
+deterministic-execution  | -      
+global-snapshot          | yes    
+immutable-blocks         | yes    
+interest-sync            | -      
+linearizable-txn         | yes    
+log-replay-sync          | -      
+multi-writer-merge       | -      
+range-scan               | yes    
+structural-delta-sync    | yes    
+time-travel              | yes    
+verifiable-index         | yes    
+
+=== write cost per steady-state transaction ===
+backend               puts     put-bytes   gets     get-bytes   msgs   ms
+actordb               6.21     37065.11    11.06    79648.57    3      77.567
+
+=== query cost per op ===
+-- point-read
+actordb               1.92      14780.46     8.401     index                   Σshards-queried=100
+-- find-by-value
+actordb               31.7      252719.46    145.053   index-fanout            Σshards-queried=800
+-- range-scan
+actordb               37        278360       161.639   index-fanout            Σshards-queried=320
+-- snapshot-read
+actordb               1.75      18144.45     11.188    db-root-history         
+
+=== replica sync ===
+-- replica-sync-since-load
+actordb               blocks-read=197       entries=396       ms=997.468      structural-delta-per-shard    critical-path=20
+-- replica-sync-from-empty
+actordb               blocks-read=130       entries=20200     ms=589.709      structural-delta-per-shard    critical-path=12
+-- replica-sync-interest-scoped
+actordb               blocks-read=197       entries=396       ms=903.447      structural-delta-per-shard    critical-path=20
+
+=== stored state ===
+actordb               blocks=1231       bytes=6744454
+
+wrote results/shards-16.edn
