@@ -213,6 +213,22 @@ would make it 4 200, like Ceramic's, and every snapshot read would scale with
 it. And Ceramic's interest-scoped win is genuine but narrow: it is the only
 shape here that can decline to sync data it does not want.
 
+### Stored state after the whole run
+
+| backend | blocks | bytes |
+|---|---|---|
+| kotobase-prolly | 2 983 | 44.3 MB |
+| orbit | 216 | 499 KB |
+| ceramic | 4 200 | 569 KB |
+| actordb (8 shards) | 2 478 | 23.2 MB |
+
+The two orders of magnitude are copy-on-write history, not waste. A Prolly leaf
+holds ~256 entries, every touched leaf becomes a *new* immutable block, and the
+old one stays reachable — which is what makes any past basis a root you can
+address. Ceramic stores the most *blocks* (one event per write per stream) and
+the fewest bytes; kotobase stores the fewest blocks per write and the most
+bytes. Deduplication is by CID, so identical subtrees are stored once.
+
 ### Sharding trade curve (actordb, 2 000 entities / 100 transactions)
 
 | shards | puts/txn | point-read gets | find-by-value gets/op | cross-shard txn msgs | sync blocks | sync critical path |

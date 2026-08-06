@@ -1,0 +1,135 @@
+workload: {:seed 20260806, :entities 4000, :datoms 20000, :load-txns 16, :update-txns 200, :total-t 216}
+running kotobase-prolly …
+   14.32 puts/txn, 2983 blocks stored
+running orbit …
+   1 puts/txn, 216 blocks stored
+running ceramic …
+   1 puts/txn, 4200 blocks stored
+running actordb …
+   8.15 puts/txn, 2478 blocks stored
+running kotobase-prolly+fvm …
+   14.32 puts/txn, 2984 blocks stored
+running orbit+fvm …
+   1 puts/txn, 217 blocks stored
+running ceramic+fvm …
+   1 puts/txn, 4201 blocks stored
+running actordb+fvm …
+   8.15 puts/txn, 2479 blocks stored
+
+=== capability matrix ===
+capability               | kotobase-prolly | orbit | ceramic | actordb
+analytical-projection    | -               | -     | yes     | -      
+cid-verified-read        | yes             | yes   | yes     | yes    
+conditional-ref          | yes             | -     | -       | yes    
+covering-index           | yes             | -     | -       | yes    
+cross-shard-txn          | -               | -     | -       | yes    
+deterministic-execution  | -               | -     | -       | -      
+global-snapshot          | yes             | yes   | -       | yes    
+immutable-blocks         | yes             | yes   | yes     | yes    
+interest-sync            | -               | -     | yes     | -      
+linearizable-txn         | yes             | -     | -       | yes    
+log-replay-sync          | -               | yes   | yes     | -      
+multi-writer-merge       | -               | yes   | yes     | -      
+range-scan               | yes             | -     | -       | yes    
+structural-delta-sync    | yes             | -     | -       | yes    
+time-travel              | yes             | yes   | yes     | yes    
+verifiable-index         | yes             | -     | -       | yes    
+
+=== write cost per steady-state transaction ===
+backend               puts     put-bytes   gets     get-bytes   msgs   ms
+kotobase-prolly       14.32    176946.675  22.56    274376.4    0      516.064
+orbit                 1        157.955     0        0           0      0.896
+ceramic               1        125.225     0        0           0      0.988
+actordb               8.15     74275.875   13.49    122460.945  3      151.623
+kotobase-prolly+fvm   14.32    176992.675  22.56    274376.4    0      556.814
+orbit+fvm             1        203.955     0        0           0      1.028
+ceramic+fvm           1        171.225     0        0           0      0.936
+actordb+fvm           8.15     74321.875   13.49    122460.945  3      154.527
+
+=== query cost per op ===
+-- point-read
+kotobase-prolly       3.02      25827        50.355    index                   
+orbit                 0         0            0.044     materialised-index      
+ceramic               1.05      141.97       0.197     cached-stream-state,stream-materialisation Σblocks-read=105 Σevents-folded=105
+actordb               2.15      17295.25     14.227    index                   Σshards-queried=100
+kotobase-prolly+fvm   3.02      25827        53.841    index                   
+orbit+fvm             0         0            0.028     materialised-index      
+ceramic+fvm           1.05      190.27       0.753     cached-stream-state,stream-materialisation Σblocks-read=105 Σevents-folded=105
+actordb+fvm           2.15      17295.25     14.29     index                   Σshards-queried=100
+-- find-by-value
+kotobase-prolly       3.46      42628.8      57.981    index                   
+orbit                 0         0            4.463     full-materialisation    Σentries-scanned=200000
+ceramic               81.9      11086.84     137.223   projection              Σprojection={:streams-materialised 3902, :blocks-read 4095, :rows 1000000} Σrows-scanned=200000
+actordb               17.46     285781.58    163.594   index-fanout            Σshards-queried=400
+kotobase-prolly+fvm   3.46      42628.8      58.204    index                   
+orbit+fvm             0         0            5.177     full-materialisation    Σentries-scanned=200000
+ceramic+fvm           81.9      14854.24     195.283   projection              Σprojection={:streams-materialised 3902, :blocks-read 4095, :rows 1000000} Σrows-scanned=200000
+actordb+fvm           17.46     285781.58    165.899   index-fanout            Σshards-queried=400
+-- range-scan
+kotobase-prolly       16        175701       120.097   index                   
+orbit                 0         0            4.937     full-materialisation    Σentries-scanned=80000
+ceramic               0         0            126.133   projection              Σprojection={:streams-materialised 0, :blocks-read 0, :rows 400000} Σrows-scanned=80000
+actordb               30        334508       196.405   index-fanout            Σshards-queried=160
+kotobase-prolly+fvm   16        175701       124.365   index                   
+orbit+fvm             0         0            5.248     full-materialisation    Σentries-scanned=80000
+ceramic+fvm           0         0            134.897   projection              Σprojection={:streams-materialised 0, :blocks-read 0, :rows 400000} Σrows-scanned=80000
+actordb+fvm           30        334508       195.277   index-fanout            Σshards-queried=160
+-- snapshot-read
+kotobase-prolly       3         24743        48.07     commit-dag              
+orbit                 216       499452       490.746   log-replay              Σblocks-read=4320 Σentries-replayed=3320
+ceramic               0         0            0                                 UNSUPPORTED(global-snapshot)
+actordb               2.05      15117        13.486    db-root-history         
+kotobase-prolly+fvm   3         24743        49.894    commit-dag              
+orbit+fvm             216       509388       647.32    log-replay              Σblocks-read=4320 Σentries-replayed=3320
+ceramic+fvm           0         0            0                                 UNSUPPORTED(global-snapshot)
+actordb+fvm           2.05      15117        12.739    db-root-history         
+
+=== replica sync ===
+-- replica-sync-since-load
+kotobase-prolly       blocks-read=273       entries=1192      ms=2045.704     structural-delta              
+orbit                 blocks-read=200       entries=200       ms=144.24       log-replay                    
+ceramic               blocks-read=200       entries=200       ms=136.06       log-replay                    
+actordb               blocks-read=244       entries=792       ms=1634.516     structural-delta-per-shard    critical-path=36
+kotobase-prolly+fvm   blocks-read=273       entries=1192      ms=2103.47      structural-delta              
+orbit+fvm             blocks-read=200       entries=200       ms=328.847      log-replay                    
+ceramic+fvm           blocks-read=200       entries=200       ms=249.255      log-replay                    
+actordb+fvm           blocks-read=244       entries=792       ms=1623.19      structural-delta-per-shard    critical-path=36
+-- replica-sync-from-empty
+kotobase-prolly       blocks-read=222       entries=60800     ms=1821.505     structural-delta              
+orbit                 blocks-read=216       entries=216       ms=427.752      log-replay                    
+ceramic               blocks-read=4200      entries=4200      ms=384.77       log-replay                    
+actordb               blocks-read=183       entries=40400     ms=1251.921     structural-delta-per-shard    critical-path=26
+kotobase-prolly+fvm   blocks-read=222       entries=60800     ms=1953.863     structural-delta              
+orbit+fvm             blocks-read=216       entries=216       ms=590.026      log-replay                    
+ceramic+fvm           blocks-read=4200      entries=4200      ms=2805.35      log-replay                    
+actordb+fvm           blocks-read=183       entries=40400     ms=1169.834     structural-delta-per-shard    critical-path=26
+-- replica-sync-interest-scoped
+kotobase-prolly       blocks-read=273       entries=1192      ms=2005.422     structural-delta              
+orbit                 blocks-read=200       entries=200       ms=139.575      log-replay                    
+ceramic               blocks-read=7         entries=7         ms=7.617        interest-scoped-sync          
+actordb               blocks-read=244       entries=792       ms=1651.057     structural-delta-per-shard    critical-path=36
+kotobase-prolly+fvm   blocks-read=273       entries=1192      ms=2029.955     structural-delta              
+orbit+fvm             blocks-read=200       entries=200       ms=297.66       log-replay                    
+ceramic+fvm           blocks-read=7         entries=7         ms=13.541       interest-scoped-sync          
+actordb+fvm           blocks-read=244       entries=792       ms=1579.78      structural-delta-per-shard    critical-path=36
+
+=== FVM host/guest boundary ===
+crossings and copied bytes are what a deterministic executor adds;
+multiply crossings by your own per-syscall cost, not by the ms above.
+backend               cross/txn    copied-bytes/txn    cross/point-read    cross/full-sync
+kotobase-prolly+fvm   36.88        472604.865          3.02                222
+orbit+fvm             1            203.955             0                   216
+ceramic+fvm           1            171.225             1.05                4200
+actordb+fvm           21.64        205621.705          2.15                183
+
+=== stored state ===
+kotobase-prolly       blocks=2983       bytes=44293549
+orbit                 blocks=216        bytes=499452
+ceramic               blocks=4200       bytes=568539
+actordb               blocks=2478       bytes=23189289
+kotobase-prolly+fvm   blocks=2984       bytes=44303535
+orbit+fvm             blocks=217        bytes=509428
+ceramic+fvm           blocks=4201       bytes=761783
+actordb+fvm           blocks=2479       bytes=23199267
+
+wrote results/latest.edn
