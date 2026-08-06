@@ -4,7 +4,9 @@
   "description": "Capability + performance comparison of OrbitDB-, Ceramic- and ActorDB-shaped backends against kotobase's own Prolly/commit-DAG shape.",
   "scripts": {
     "setup": "nbb setup.cljs",
-    "bench": "nbb --classpath \"$(nbb setup.cljs --print-classpath)\" run.cljs"
+    "bench": "nbb --classpath \"$(nbb setup.cljs --print-classpath)\" run.cljs",
+    "bench:semantic": "nbb --classpath \"$(nbb setup.cljs --print-classpath)\" run-semantic.cljs",
+    "verify": "nbb --classpath \"$(nbb setup.cljs --print-classpath)\" verify.cljs"
   },
   "dependencies": {
     "@noble/hashes": "2.0.1"

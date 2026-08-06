@@ -62,6 +62,15 @@ Options: `--entities`, `--updates`, `--shards`, `--backends a,b`, `--fvm`,
 `--out FILE`. Full results land in `results/latest.edn` (EDN, so it transacts
 straight into a datom plane) and the console table in `results/latest.txt`.
 
+## A second benchmark: the semantic code graph
+
+[`README-semantic.md`](README-semantic.md) measures the *other* half of the
+"CID graph as a database" question — code rather than rows. It chunks the IR
+that `kotoba.codebase.semantic-code` really produces under three block
+granularities (every node / every definition / semantic chunks), and measures
+the datom projection, the namespace commit plane, and a CID-keyed evaluation
+cache. Run it with `run-semantic.cljs`.
+
 ## The capability vocabulary
 
 `src/kotobase/capability.cljc` is the contract. A backend declares a set; the

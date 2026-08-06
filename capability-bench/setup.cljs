@@ -17,11 +17,16 @@
             ["path" :as path]))
 
 (def deps
-  [{:name "io-multiformats" :sha "eec3ee85c458ea830be94518b9a42f4a8f1aee40"}
-   {:name "dag-cbor"}
-   {:name "io-ipld" :sha "4591764514239c4777f227a7a56d46c901e2a4a0"}
-   {:name "prolly-tree"}
-   {:name "crdt"}])
+  "Pinned to the commits the published results were actually produced against,
+  not to whatever is at HEAD today."
+  [{:name "io-multiformats" :sha "b3b157e683a943d4f2e9362d9366cceefff3f656"}
+   {:name "dag-cbor" :sha "4a8a08efb8668fae9c1884d390a6610ca42890d8"}
+   {:name "io-ipld" :sha "5d8de535ebc2c10bb90a671ea6019783ecbd2137"}
+   {:name "prolly-tree" :sha "05e3bff85f5ec27d8a9e2f57d3dd74355a3ab738"}
+   {:name "crdt" :sha "34ae7931914f974f759de8806ddb2f4b24c7f0ea"}
+   ;; the real semantic definition identity: canonical DAG-CBOR of checked,
+   ;; alpha-normalised, name-free IR (used by run-semantic.cljs)
+   {:name "codebase" :sha "bc85d8d11e6013cd3d75dde657f4e4526c9f7bf6"}])
 
 (def dep-dir ".deps")
 

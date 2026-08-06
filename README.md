@@ -276,6 +276,13 @@ nbb --classpath "$(nbb setup.cljs --print-classpath)" verify.cljs   # all four m
 nbb --classpath "$(nbb setup.cljs --print-classpath)" run.cljs --fvm
 ```
 
+The same module also measures the **semantic code graph** —
+[`capability-bench/README-semantic.md`](capability-bench/README-semantic.md) —
+by chunking the IR that `kotoba.codebase.semantic-code` really produces at
+three block granularities (every node / every definition / semantic chunks),
+next to the datom projection, the namespace commit plane, and a CID-keyed
+evaluation cache that refuses to memoise effects.
+
 ## Consumers
 
 The cloud API workers [local-murakumo](https://github.com/gftdcojp/local-murakumo)
