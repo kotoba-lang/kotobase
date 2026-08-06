@@ -71,6 +71,15 @@ granularities (every node / every definition / semantic chunks), and measures
 the datom projection, the namespace commit plane, and a CID-keyed evaluation
 cache. Run it with `run-semantic.cljs`.
 
+## A third benchmark: object store, encryption, identity, lake
+
+[`README-storage.md`](README-storage.md) puts the winning architecture on an
+object-store profile and measures what changes there: requests and **hops**
+(the dependent round-trip chain that sets the latency floor), client-side
+AES-256-GCM, the three CID identity schemes (source text / S-expression /
+checked KIR), a columnar lake projection, and the cost of verification.
+Run it with `run-storage.cljs`.
+
 ## The capability vocabulary
 
 `src/kotobase/capability.cljc` is the contract. A backend declares a set; the

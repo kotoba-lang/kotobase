@@ -6,6 +6,7 @@
     "setup": "nbb setup.cljs",
     "bench": "nbb --classpath \"$(nbb setup.cljs --print-classpath)\" run.cljs",
     "bench:semantic": "nbb --classpath \"$(nbb setup.cljs --print-classpath)\" run-semantic.cljs",
+    "bench:storage": "nbb --classpath \"$(nbb setup.cljs --print-classpath)\" run-storage.cljs",
     "verify": "nbb --classpath \"$(nbb setup.cljs --print-classpath)\" verify.cljs"
   },
   "dependencies": {

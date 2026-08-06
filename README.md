@@ -281,7 +281,10 @@ The same module also measures the **semantic code graph** —
 by chunking the IR that `kotoba.codebase.semantic-code` really produces at
 three block granularities (every node / every definition / semantic chunks),
 next to the datom projection, the namespace commit plane, and a CID-keyed
-evaluation cache that refuses to memoise effects.
+evaluation cache that refuses to memoise effects. A third,
+[`capability-bench/README-storage.md`](capability-bench/README-storage.md),
+puts the result on an object-store profile — requests vs hops, client-side
+encryption, CID identity schemes, and a columnar lake projection.
 
 ## Consumers
 
