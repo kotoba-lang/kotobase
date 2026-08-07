@@ -80,6 +80,44 @@ AES-256-GCM, the three CID identity schemes (source text / S-expression /
 checked KIR), a columnar lake projection, and the cost of verification.
 Run it with `run-storage.cljs`.
 
+## A fourth benchmark: client-side descent — hops measured, not declared
+
+`run-descent.cljs` closes a gap the third benchmark states about itself:
+**`run-storage.cljs` takes `hops` as a parameter** ("hops is supplied by the
+caller from the algorithm's dependency structure"). That is honest, but it
+means every hop figure downstream is an assertion. This one counts them.
+
+A dependent round is a cache **miss** on the descent path — the client cannot
+know the next node's CID until the current node's bytes arrive, and a hit
+costs no round. So misses-along-the-path *is* the hop count, and it is
+countable.
+
+Measured over the real `prolly-tree` (4,000 entities / 20,000 datoms /
+50 point reads, tree height 2), varying the client-side block cache:
+
+| cache | hops/op | hit rate | vs cache=0 |
+|---|---|---|---|
+| 0 | 2.04 | 0% | 1x |
+| 10 | 1.04 | 49.0% | 0.51x |
+| **100** | **0.70** | 65.7% | **0.34x** |
+| 1,000 / 10,000 | 0.70 | 65.7% | 0.34x |
+
+Two results worth carrying:
+
+1. **The cache saturates at ~100 blocks.** 1,000 and 10,000 are identical.
+   The hits are the upper tree levels, which are shared across queries and
+   few; sizing past that buys nothing.
+2. **0.70 is below 1.** A descent that is fully cached needs no network at
+   all, so a client that descends an *opaque* index can reach a lower
+   latency floor than one that asks a server which can read the index —
+   the latter always costs its one round trip. The intuition that hiding
+   the index from the server necessarily adds a hop is wrong at this
+   cache size.
+
+No network is involved: multiply hops by your own RTT. The cache is FIFO,
+not LRU, which understates the hit rate a real client would get.
+Run it with `npm run bench:descent`.
+
 ## The capability vocabulary
 
 `src/kotobase/capability.cljc` is the contract. A backend declares a set; the
