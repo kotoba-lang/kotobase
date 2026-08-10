@@ -75,14 +75,41 @@
       (throw (ex-info "formal criss-cross envelopes are incomplete"
                       {:count (count envelopes)})))
     (into [["frontier" (peek keys)]]
-          (concat (map-indexed (fn [index key] [(str "node" index) key]) keys)
-                  (map-indexed (fn [index key] [(str "index:" key) (str index)]) keys)
-                  (map (fn [key envelope]
+          (concat (map (fn [key envelope]
                          [(str "offset:" key)
                           (str (.indexOf ^String envelope "67706172656e7473"))])
                        keys envelopes)
                   (map (fn [key envelope] [(str "block:" key) envelope])
                        keys envelopes)))))
+
+(defn- synthetic-chain-entries [node-count]
+  (let [cids (mapv (fn [index]
+                     (str "bafy" (format "%055d" index)))
+                   (range node-count))
+        keys (mapv cbor-text-item-hex cids)
+        marker "67706172656e7473"
+        envelopes
+        (mapv (fn [index]
+                (if (zero? index)
+                  (str marker "80")
+                  (str marker "81" (nth keys (dec index)))))
+              (range node-count))]
+    (into [["frontier" (peek keys)]]
+          (concat
+           (map (fn [key] [(str "offset:" key) "0"]) keys)
+           (map (fn [key envelope] [(str "block:" key) envelope])
+                keys envelopes)))))
+
+(defn- synthetic-cycle-entries []
+  (let [keys (mapv cbor-text-item-hex
+                   ["bafy0000000000000000000000000000000000000000000000000000001"
+                    "bafy0000000000000000000000000000000000000000000000000000002"])
+        marker "67706172656e7473"]
+    [["frontier" (second keys)]
+     [(str "offset:" (first keys)) "0"]
+     [(str "offset:" (second keys)) "0"]
+     [(str "block:" (first keys)) (str marker "81" (second keys))]
+     [(str "block:" (second keys)) (str marker "81" (first keys))]]))
 
 (defn- write-block-provider! [directory entries]
   (let [file (io/file directory "cid-block-provider.tsv")]
@@ -293,10 +320,7 @@
       (let [source (slurp source-file)
             export-names ["external-frontier-length" "external-envelope-length"
                           "external-parent-count" "external-first-parent-length"
-                          "external-closure-0" "external-closure-1"
-                          "external-closure-2" "external-closure-3"
-                          "external-closure-4" "external-closure-5"
-                          "external-closure-6" "external-closure-7"
+                          "external-closure-count" "external-root-height"
                           "check-external-parent-decode"
                           "check-external-closure"
                           "check-external-causal-height"]
@@ -314,12 +338,12 @@
                       :external-envelope-length 1654
                       :external-parent-count 2
                       :external-first-parent-length 122
-                      :external-closure-0 1 :external-closure-1 3
-                      :external-closure-2 5 :external-closure-3 11
-                      :external-closure-4 21 :external-closure-5 47
-                      :external-closure-6 87 :external-closure-7 255}]
+                      :external-closure-count 8
+                      :external-root-height 4}]
         (testing "the compiled guest contains no signed-envelope fixture bytes"
-          (is (not (str/includes? source (second (nth entries 25))))))
+          (is (not (str/includes? source (second (last entries)))))
+          (is (not (str/includes? source "node0")))
+          (is (not (str/includes? source "index:"))))
         (testing "provider-supplied CID blocks produce the same traversal on both targets"
           (is (= expected (:results wasm)))
           (is (= (:results wasm) (:results native))))
@@ -335,5 +359,76 @@
                   :signed-commit-count 8
                   :wasm wasm :native native
                   :provider-supplied-dag-qualified true
-                  :unbounded-dag-qualified false})))
+                  :bounded-dynamic-cid-page-qualified true
+                  :local-page-entry-limit 128
+                  :global-page-dag-qualified false})))
+      (finally (delete-tree! directory)))))
+
+(deftest the-same-guest-traverses-a-provider-generated-twelve-node-page
+  (let [source-file (project-file "kotoba" "cid_external_dag_traversal.kotoba")
+        directory (temp-dir)]
+    (try
+      (let [source (slurp source-file)
+            export-names ["external-closure-count" "external-root-height"]
+            entries (synthetic-chain-entries 12)
+            provider-file (write-block-provider! directory entries)
+            wasm (run-wasm source directory export-names "cid-dynamic-page-12"
+                           external-capability-policy [14] entries)
+            native (run-native source directory export-names
+                               "cid-dynamic-page-12"
+                               external-capability-policy "14" provider-file)
+            expected {:external-closure-count 12 :external-root-height 11}]
+        (is (= expected (:results wasm)))
+        (is (= expected (:results native)))
+        (is (= (:results wasm) (:results native)))
+        (is (= 25 (count entries))
+            "one frontier plus offset/block data; no positional inventory")
+        (println
+         (pr-str {:schema :kotobase.dynamic-cid-page-qualification/v1
+                  :source "kotoba/cid_external_dag_traversal.kotoba"
+                  :provider-generated-node-count 12
+                  :expected-root-height 11
+                  :wasm wasm :native native
+                  :fixed-eight-inventory-required false
+                  :local-page-entry-limit 128})))
+      (finally (delete-tree! directory)))))
+
+(deftest dynamic-page-faults-fail-closed-on-both-backends
+  (let [source (slurp (project-file "kotoba" "cid_external_dag_traversal.kotoba"))
+        directory (temp-dir)
+        export-names ["external-closure-count" "external-root-height"]]
+    (try
+      (testing "a provider cycle is bounded and marked invalid"
+        (let [entries (synthetic-cycle-entries)
+              provider-file (write-block-provider! directory entries)
+              wasm (run-wasm source directory export-names "cid-cycle"
+                             external-capability-policy [14] entries)
+              native (run-native source directory export-names "cid-cycle"
+                                 external-capability-policy "14" provider-file)
+              expected {:external-closure-count 2 :external-root-height -2}]
+          (is (= expected (:results wasm)))
+          (is (= expected (:results native)))))
+      (testing "an unverified offset hint contributes no closure"
+        (let [entries (mapv (fn [[key value]]
+                              [key (if (str/starts-with? key "offset:") "2" value)])
+                            (synthetic-chain-entries 12))
+              provider-file (write-block-provider! directory entries)
+              wasm (run-wasm source directory export-names "cid-bad-offset"
+                             external-capability-policy [14] entries)
+              native (run-native source directory export-names "cid-bad-offset"
+                                 external-capability-policy "14" provider-file)
+              expected {:external-closure-count 0 :external-root-height -2}]
+          (is (= expected (:results wasm)))
+          (is (= expected (:results native)))))
+      (testing "a 129th local CID traps at the sealed page bound"
+        (let [entries (synthetic-chain-entries 129)
+              provider-file (write-block-provider! directory entries)]
+          (is (thrown? clojure.lang.ExceptionInfo
+                       (run-wasm source directory ["external-closure-count"]
+                                 "cid-page-overflow"
+                                 external-capability-policy [14] entries)))
+          (is (thrown? clojure.lang.ExceptionInfo
+                       (run-native source directory ["external-closure-count"]
+                                   "cid-page-overflow"
+                                   external-capability-policy "14" provider-file)))))
       (finally (delete-tree! directory)))))
