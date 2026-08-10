@@ -31,17 +31,28 @@ explicit open gate. Cycle, forged-offset, and 129th-entry adversarial cases
 fail closed on both execution targets.
 
 Transaction replay follows the same rule. A provider may return an immutable
-`kotobase.transaction-replay-page.v1` block, but Kotoba verifies its CID, the
-digest bytes in every DAG-CBOR transaction link, the canonical public
+`kotobase.transaction-replay-page.v2` block with `next`, `previous_state`, and
+`start_sequence` boundaries, but Kotoba verifies its CID, the digest bytes in
+every DAG-CBOR transaction and state link, the canonical public
 transaction/quad grammar, every novelty/state checkpoint transition, and the
-recomputed state root. One page is bounded to 16 transactions. A scheduler
-must accept only the conjunction of the page, count, every per-index CID, atom,
-and replay-step result, and the final root; neither `main` nor the final-root
-stage is a standalone verifier. The native/Wasm qualification covers the
-original three-transaction vector, a provider-generated five-transaction
-vector, the actual 16-transaction/16-atom sealed-page boundary, wrong-CID
-substitution, malformed atoms, and a forged intermediate checkpoint. Global
-transaction page-DAG scheduling remains an explicit open gate.
+recomputed state root. Novelty is derived from the CID-verified previous state;
+the provider does not supply a parallel novelty array. One page is bounded to
+16 transactions. A client scheduler MUST follow only the verified `next` CID,
+MUST reject a discontinuous sequence or previous-state boundary, and MUST keep
+a visited set and an explicit page budget. It must accept only the conjunction
+of the page, boundary, count, every per-index CID, atom, replay-step result, and
+the final root; neither `main` nor the final-root stage is a standalone
+verifier.
+
+Native/Wasm qualification covers the original three-transaction vector, a
+provider-generated five-transaction vector, the actual 16-transaction/16-atom
+sealed-page boundary, and a 40-transaction chain split into 16/16/8 pages with
+start sequences 0/16/32. It also rejects wrong-CID substitution, malformed
+atoms, a forged intermediate checkpoint, successor bytes under a claimed CID,
+sequence discontinuity, forged `previous_state`, and self-reference/revisit.
+This qualifies the bounded linear CID-linked transaction page-chain scheduler.
+Arbitrary branching page-DAG scheduling, unbounded replay, Google-scale
+operation, and Neo4j performance remain explicit open evidence gates.
 
 Everything below describing `IRefStore`, conditional refs, PostgreSQL, D1, or
 single-writer IPNS is a compatibility/migration surface, not the formal route.
