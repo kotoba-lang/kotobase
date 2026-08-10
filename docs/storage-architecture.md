@@ -30,6 +30,19 @@ from widening one process-local map; global multi-page scheduling remains an
 explicit open gate. Cycle, forged-offset, and 129th-entry adversarial cases
 fail closed on both execution targets.
 
+Transaction replay follows the same rule. A provider may return an immutable
+`kotobase.transaction-replay-page.v1` block, but Kotoba verifies its CID, the
+digest bytes in every DAG-CBOR transaction link, the canonical public
+transaction/quad grammar, every novelty/state checkpoint transition, and the
+recomputed state root. One page is bounded to 16 transactions. A scheduler
+must accept only the conjunction of the page, count, every per-index CID, atom,
+and replay-step result, and the final root; neither `main` nor the final-root
+stage is a standalone verifier. The native/Wasm qualification covers the
+original three-transaction vector, a provider-generated five-transaction
+vector, the actual 16-transaction/16-atom sealed-page boundary, wrong-CID
+substitution, malformed atoms, and a forged intermediate checkpoint. Global
+transaction page-DAG scheduling remains an explicit open gate.
+
 Everything below describing `IRefStore`, conditional refs, PostgreSQL, D1, or
 single-writer IPNS is a compatibility/migration surface, not the formal route.
 

@@ -1,0 +1,436 @@
+(ns kotobase.cid-external-transaction-replay
+  ;; A provider transports immutable replay-page and transaction blocks. The
+  ;; guest verifies every CID, validates the bounded public transaction atom
+  ;; grammar, and recomputes the state root. Provider listings and databases
+  ;; are not correctness inputs.
+  (:export [main check-page-cid transaction-count
+            transaction-atom-count-at check-transaction-cid-at
+            check-replay-step-at check-replay-root])
+  (:capabilities #{:hash/sha256 :object/get-stream}))
+
+(defn- slice [text :string start :i64 end :i64] :string
+  (string-substring text start end))
+
+(defn- digit [alphabet :string value :i64] :string
+  (slice alphabet value (+ value 1)))
+
+(defn- remainder [value :i64 divisor :i64] :i64
+  (- value (* (quot value divisor) divisor)))
+
+(defn- hex-nibble-loop [code :i64 alphabet :string i :i64] :i64
+  (if (>= i (string-byte-length alphabet))
+    -1
+    (if (= code (string-code-point-at alphabet i))
+      i
+      (hex-nibble-loop code alphabet (+ i 1)))))
+
+(defn- hex-nibble [code :i64] :i64
+  (hex-nibble-loop code "0123456789abcdef" 0))
+
+(defn- hex-byte-at [text :string offset :i64] :i64
+  (let [high (hex-nibble (string-code-point-at text offset))
+        low (hex-nibble (string-code-point-at text (+ offset 1)))]
+    (if (< high 0) -1
+      (if (< low 0) -1 (+ (* high 16) low)))))
+
+(defn- hex-byte [value :i64] :string
+  (string-concat (digit "0123456789abcdef" (quot value 16))
+                 (digit "0123456789abcdef" (remainder value 16))))
+
+(defn- ascii-hex-loop [text :string i :i64] :string
+  (if (>= i (string-byte-length text))
+    ""
+    (string-concat (hex-byte (string-code-point-at text i))
+                   (ascii-hex-loop text (+ i 1)))))
+
+(defn- ascii-hex [text :string] :string
+  (ascii-hex-loop text 0))
+
+(defn- cbor-text [text :string] :string
+  (let [length (string-byte-length text)
+        header (if (< length 24)
+                 (hex-byte (+ 96 length))
+                 (string-concat "78" (hex-byte length)))]
+    (string-concat header (ascii-hex text))))
+
+(defn- text-length-at [hex :string offset :i64] :i64
+  (let [head (hex-byte-at hex offset)]
+    (if (< head 0) -1
+      (if (>= head 96)
+        (if (< head 120) (- head 96)
+          (if (= head 120) (hex-byte-at hex (+ offset 2)) -1))
+        -1))))
+
+(defn- text-header-size-at [hex :string offset :i64] :i64
+  (if (= (hex-byte-at hex offset) 120) 4 2))
+
+(defn- text-end [hex :string offset :i64] :i64
+  (let [length (text-length-at hex offset)]
+    (if (< length 0) -1
+      (let [end (+ offset (text-header-size-at hex offset) (* length 2))]
+        (if (> end (string-byte-length hex)) -1 end)))))
+
+(defn- encoded-text-equals
+  [hex :string offset :i64 expected :string]
+  :i64
+  (let [length (text-length-at hex offset)]
+    (if (not (= length (string-byte-length expected))) 0
+      (encoded-text-bytes-equal-loop
+       hex (+ offset (text-header-size-at hex offset)) expected 0 length))))
+
+(defn- encoded-text-bytes-equal-loop
+  [hex :string content-offset :i64 expected :string index :i64 length :i64]
+  :i64
+  (if (= index length)
+    1
+    (if (= (hex-byte-at hex (+ content-offset (* index 2)))
+           (string-code-point-at expected index))
+      (encoded-text-bytes-equal-loop hex content-offset expected
+                                     (+ index 1) length)
+      0)))
+
+(defn- bytes-length-at [hex :string offset :i64] :i64
+  (let [head (hex-byte-at hex offset)]
+    (if (< head 0) -1
+      (if (>= head 64)
+        (if (< head 88) (- head 64)
+          (if (= head 88) (hex-byte-at hex (+ offset 2)) -1))
+        -1))))
+
+(defn- bytes-header-size-at [hex :string offset :i64] :i64
+  (if (= (hex-byte-at hex offset) 88) 4 2))
+
+(defn- bytes-start [hex :string offset :i64] :i64
+  (+ offset (bytes-header-size-at hex offset)))
+
+(defn- bytes-end [hex :string offset :i64] :i64
+  (let [length (bytes-length-at hex offset)]
+    (if (< length 0) -1
+      (let [end (+ (bytes-start hex offset) (* length 2))]
+        (if (> end (string-byte-length hex)) -1 end)))))
+
+(defn- array-count-at [hex :string offset :i64] :i64
+  (let [head (hex-byte-at hex offset)]
+    (if (>= head 128)
+      (if (<= head 144) (- head 128) -1)
+      -1)))
+
+(defn- array-items-offset [offset :i64] :i64 (+ offset 2))
+
+(defn- link-end [hex :string offset :i64] :i64
+  (let [end (+ offset 82)]
+    (if (> end (string-byte-length hex)) -1
+      (if (string=? (slice hex offset (+ offset 18)) "d82a58250001711220")
+        end -1))))
+
+(defn- skip-links
+  [hex :string offset :i64 remaining :i64]
+  :i64
+  (if (= remaining 0)
+    offset
+    (let [next (link-end hex offset)]
+      (if (< next 0) -1 (skip-links hex next (- remaining 1))))))
+
+(defn- page-states-array-offset [page :string] :i64
+  (if (not (= (hex-byte-at page 0) 165)) -1
+    (if (= (encoded-text-equals page 2 "schema") 0) -1
+      (let [schema-offset (text-end page 2)
+            after-schema (if (< schema-offset 0) -1 (text-end page schema-offset))]
+        (if (< after-schema 0) -1
+          (if (= (encoded-text-equals page schema-offset
+                                      "kotobase.transaction-replay-page.v1") 0)
+            -1
+            (if (= (encoded-text-equals page after-schema "states") 0)
+              -1
+              (text-end page after-schema))))))))
+
+(defn- page-novelties-array-offset [page :string] :i64
+  (let [states-offset (page-states-array-offset page)
+        count (if (< states-offset 0) -1 (array-count-at page states-offset))
+        after-states (if (< count 0) -1
+                       (skip-links page (array-items-offset states-offset) count))]
+    (if (< after-states 0) -1
+      (if (= (encoded-text-equals page after-states "novelties") 0) -1
+        (text-end page after-states)))))
+
+(defn- page-array-offset [page :string] :i64
+  (let [novelties-offset (page-novelties-array-offset page)
+        count (if (< novelties-offset 0) -1
+                (array-count-at page novelties-offset))
+        after-novelties (if (< count 0) -1
+                          (skip-links page
+                                      (array-items-offset novelties-offset)
+                                      count))]
+    (if (< after-novelties 0) -1
+      (if (= (encoded-text-equals page after-novelties "transactions") 0) -1
+        (text-end page after-novelties)))))
+
+(defn- page-transaction-count [page :string] :i64
+  (let [offset (page-array-offset page)]
+    (if (< offset 0) -1 (array-count-at page offset))))
+
+(defn- page-transaction-at [page :string index :i64] :string
+  (let [array-offset (page-array-offset page)
+        count (if (< array-offset 0) -1 (array-count-at page array-offset))
+        item-offset (if (< count 0) -1
+                      (skip-links page (array-items-offset array-offset) index))]
+    (if (< item-offset 0) ""
+      (if (>= index count) ""
+        (let [end (link-end page item-offset)]
+          (if (< end 0) "" (slice page item-offset end)))))))
+
+(defn- page-link-at [page :string array-offset :i64 index :i64] :string
+  (let [count (if (< array-offset 0) -1 (array-count-at page array-offset))
+        item-offset (if (< count 0) -1
+                      (skip-links page (array-items-offset array-offset) index))]
+    (if (< item-offset 0) ""
+      (if (>= index count) ""
+        (let [end (link-end page item-offset)]
+          (if (< end 0) "" (slice page item-offset end)))))))
+
+(defn- page-state-at [page :string index :i64] :string
+  (page-link-at page (page-states-array-offset page) index))
+
+(defn- page-novelty-at [page :string index :i64] :string
+  (page-link-at page (page-novelties-array-offset page) index))
+
+(defn- page-expected-root [page :string] :string
+  (let [array-offset (page-array-offset page)
+        count (if (< array-offset 0) -1 (array-count-at page array-offset))
+        after-items (if (< count 0) -1
+                      (skip-links page (array-items-offset array-offset) count))]
+    (if (< after-items 0) ""
+      (if (= (encoded-text-equals page after-items "expected_state_root") 0) ""
+        (let [value-offset (text-end page after-items)
+              value-end (if (< value-offset 0) -1 (text-end page value-offset))]
+          (if (< value-end 0) ""
+            (if (not (= value-end (string-byte-length page))) ""
+              (slice page value-offset value-end))))))))
+
+(defn- quad-end [payload :string offset :i64] :i64
+  (let [header (hex-byte-at payload offset)
+        after-header (+ offset 2)]
+    (if (not (= header 163))
+      (if (not (= header 164)) -1
+        (quad-fields-end payload after-header 1))
+      (quad-fields-end payload after-header 0))))
+
+(defn- quad-fields-end [payload :string offset :i64 retract :i64] :i64
+  (if (= (encoded-text-equals payload offset "o") 0) -1
+    (let [object-offset (text-end payload offset)
+          after-object (if (< object-offset 0) -1 (text-end payload object-offset))]
+      (if (< after-object 0) -1
+        (if (= (encoded-text-equals payload after-object "p") 0) -1
+          (let [predicate-offset (text-end payload after-object)
+                after-predicate (if (< predicate-offset 0) -1
+                                  (text-end payload predicate-offset))]
+            (if (< after-predicate 0) -1
+              (if (= (encoded-text-equals payload after-predicate "s") 0) -1
+                (let [subject-offset (text-end payload after-predicate)
+                      after-subject (if (< subject-offset 0) -1
+                                      (text-end payload subject-offset))]
+                  (if (< after-subject 0) -1
+                    (if (= retract 0)
+                      after-subject
+                      (if (= (encoded-text-equals payload after-subject "op") 0) -1
+                        (let [op-offset (text-end payload after-subject)
+                              after-op (if (< op-offset 0) -1
+                                         (text-end payload op-offset))]
+                          (if (< after-op 0) -1
+                            (if (= (encoded-text-equals payload op-offset
+                                                        "retract") 1)
+                              after-op -1)))))))))))))))
+
+(defn- quads-end-loop
+  [payload :string offset :i64 remaining :i64]
+  :i64
+  (if (= remaining 0)
+    offset
+    (let [next (quad-end payload offset)]
+      (if (< next 0) -1
+        (quads-end-loop payload next (- remaining 1))))))
+
+(defn- transaction-atom-count [block :string] :i64
+  (if (not (string=? (slice block 0 8) "a1626374")) -1
+    (let [byte-offset 8
+          payload-start (bytes-start block byte-offset)
+          payload-end (bytes-end block byte-offset)]
+      (if (< payload-end 0) -1
+        (if (not (= payload-end (string-byte-length block))) -1
+          (if (not (string=? (slice block payload-start (+ payload-start 14))
+                             "a1657175616473")) -1
+            (let [array-offset (+ payload-start 14)
+                  count (array-count-at block array-offset)
+                  end (if (< count 0) -1
+                        (quads-end-loop block (array-items-offset array-offset)
+                                        count))]
+              (if (< end 0) -1
+                (if (= end payload-end) count -1)))))))))
+
+(defn- pow2 [bits :i64] :i64
+  (if (= bits 0) 1
+    (if (= bits 1) 2
+      (if (= bits 2) 4
+        (if (= bits 3) 8
+          (if (= bits 4) 16
+            (if (= bits 5) 32
+              (if (= bits 6) 64 128))))))))
+
+(defn- base32-loop
+  [hex :string offset :i64 buffer :i64 bits :i64 output :string]
+  :string
+  (if (>= bits 5)
+    (let [remaining (- bits 5)
+          divisor (pow2 remaining)
+          index (quot buffer divisor)
+          next-buffer (remainder buffer divisor)]
+      (base32-loop hex offset next-buffer remaining
+                   (string-concat output
+                                  (digit "abcdefghijklmnopqrstuvwxyz234567" index))))
+    (if (< offset (string-byte-length hex))
+      (base32-loop hex (+ offset 2)
+                   (+ (* buffer 256) (hex-byte-at hex offset))
+                   (+ bits 8) output)
+      (if (> bits 0)
+        (string-concat output
+                       (digit "abcdefghijklmnopqrstuvwxyz234567"
+                              (* buffer (pow2 (- 5 bits)))))
+        output))))
+
+(defn- sha256-digest [bytes-hex :string] :string
+  (typed-cap-call :hash/sha256 :string :string
+                  (string-concat "hex:" bytes-hex)))
+
+(defn- cid-from-digest [digest-hex :string] :string
+  (string-concat "b" (base32-loop (string-concat "01711220" digest-hex)
+                                  0 0 0 "")))
+
+(defn- cid-item-for-block [block :string] :string
+  (cbor-text (cid-from-digest (sha256-digest block))))
+
+(defn- dag-link-from-digest [digest-hex :string] :string
+  (string-concat "d82a58250001711220" digest-hex))
+
+(defn- novelty-block-hex
+  [transaction-digest :string previous-novelty-digest :string]
+  :string
+  (string-concat
+   "a26165"
+   (string-concat
+    (dag-link-from-digest transaction-digest)
+    (string-concat "6472657374"
+                   (if (string=? previous-novelty-digest "")
+                     "f6"
+                     (dag-link-from-digest previous-novelty-digest))))))
+
+(defn- chain-block-hex
+  [sequence :i64 previous-chain-digest :string novelty-digest :string]
+  :string
+  (let [previous (if (string=? previous-chain-digest "")
+                   "f6"
+                   (dag-link-from-digest previous-chain-digest))
+        state (string-concat
+               "67696e6465786564f66c6e6f76656c74792d6261636b"
+               (string-concat
+                (dag-link-from-digest novelty-digest)
+                (string-concat
+                 "6d6e6f76656c74792d636f756e74"
+                 (string-concat (hex-byte (+ sequence 1))
+                                "6d6e6f76656c74792d66726f6e74f6"))))]
+    (string-concat
+     "a363736571"
+     (string-concat
+      (hex-byte sequence)
+      (string-concat "6470726576"
+                     (string-concat previous
+                                    (string-concat "657374617465a4" state)))))))
+
+(defn- fetch [key :string] :string
+  (typed-cap-call :object/get-stream :string :string key))
+
+(defn- frontier [] :string (fetch "frontier"))
+(defn- block-for [cid-item :string] :string
+  (fetch (string-concat "block:" cid-item)))
+
+(defn- page [] :string (block-for (frontier)))
+
+(defn check-page-cid [] :i64
+  (let [page-block (page)]
+    (if (string=? (cid-item-for-block page-block) (frontier)) 1 0)))
+
+(defn transaction-count [] :i64
+  (let [page-block (page)]
+    (if (= (check-page-cid) 0) -1
+      (if (string=? (page-expected-root page-block) "") -1
+        (let [transactions (page-transaction-count page-block)
+              states (array-count-at page-block
+                                     (page-states-array-offset page-block))
+              novelties (array-count-at
+                         page-block (page-novelties-array-offset page-block))]
+          (if (not (= transactions states)) -1
+            (if (not (= transactions novelties)) -1 transactions)))))))
+
+(defn transaction-atom-count-at [index :i64] :i64
+  (let [page-block (page)
+        count (transaction-count)]
+    (if (< index 0) -1
+      (if (>= index count) -1
+        (let [cid-link (page-transaction-at page-block index)
+              block (if (string=? cid-link "") "" (block-for cid-link))]
+          (if (string=? cid-link "") -1
+            (transaction-atom-count block)))))))
+
+(defn check-transaction-cid-at [index :i64] :i64
+  (let [page-block (page)
+        count (transaction-count)]
+    (if (< index 0) 0
+      (if (>= index count) 0
+        (let [cid-link (page-transaction-at page-block index)
+              block (if (string=? cid-link "") "" (block-for cid-link))]
+          (if (string=? cid-link "") 0
+            (if (string=? (sha256-digest block) (slice cid-link 18 82))
+              1 0)))))))
+
+(defn check-replay-step-at [index :i64] :i64
+  (let [page-block (page)
+        count (transaction-count)]
+    (if (< index 0) 0
+      (if (>= index count) 0
+        (let [transaction-link (page-transaction-at page-block index)
+              transaction-block (if (string=? transaction-link "") ""
+                                  (block-for transaction-link))
+              transaction-digest (if (string=? transaction-link "") ""
+                                   (sha256-digest transaction-block))
+              previous-novelty (if (= index 0) ""
+                                 (slice (page-novelty-at page-block (- index 1))
+                                        18 82))
+              previous-state (if (= index 0) ""
+                               (slice (page-state-at page-block (- index 1))
+                                      18 82))
+              novelty-digest (if (string=? transaction-digest "") ""
+                               (sha256-digest
+                                (novelty-block-hex transaction-digest
+                                                   previous-novelty)))
+              state-digest (if (string=? novelty-digest "") ""
+                             (sha256-digest
+                              (chain-block-hex index previous-state
+                                               novelty-digest)))
+              claimed-novelty (page-novelty-at page-block index)
+              claimed-state (page-state-at page-block index)]
+          (if (not (string=? transaction-digest
+                             (slice transaction-link 18 82))) 0
+            (if (not (string=? novelty-digest
+                               (slice claimed-novelty 18 82))) 0
+              (if (string=? state-digest (slice claimed-state 18 82))
+                1 0))))))))
+
+(defn check-replay-root [] :i64
+  (let [page-block (page)
+        count (transaction-count)
+        final-state (if (< count 1) "" (page-state-at page-block (- count 1)))
+        digest (if (string=? final-state "") "" (slice final-state 18 82))
+        actual (if (string=? digest "") "" (cbor-text (cid-from-digest digest)))
+        expected (page-expected-root page-block)]
+    (if (string=? actual expected) 1 0)))
+
+(defn main [] :i64 (check-page-cid))
