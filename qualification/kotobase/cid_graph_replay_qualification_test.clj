@@ -122,7 +122,7 @@
         (println
          (pr-str {:schema :kotobase.rust-free-graph-semantics-qualification/v1
                   :source "kotoba/cid_graph_replay.kotoba"
-                  :compiler-revision "875e3882dd76508d1a9a51f7f5ac0f1e563e490d"
+                  :compiler-revision "3febafca47ec89eb7167a7756cdd3fd579686dc3"
                   :wasm wasm
                   :native native
                   :fixed-scalarized-ancestry-matrix-qualified true

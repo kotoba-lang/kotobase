@@ -18,10 +18,17 @@ recorded locally by `docs/adr/2608090000-rust-free-cid-canonical-route.md`.
 The checked-in fixed C3 vector is qualified layer by layer on both actual
 Kotoba targets. A formal eight-commit signed criss-cross fixture also qualifies
 DAG-CBOR parent decoding, shared-ancestor closure, deduplication, and causal
-height on both targets. Generalized externally supplied DAG traversal remains
-an explicit open gate. A provider-supplied bounded slice also executes the same
-eight-node DAG without embedding commit envelopes in the guest: Kotoba verifies
-provider offset hints against DAG-CBOR and owns closure and causal height.
+height on both targets. The provider-supplied path embeds neither envelopes nor
+a positional CID inventory in the guest: Kotoba starts from a frontier CID,
+fetches parents directly by CID, verifies provider offset hints against
+DAG-CBOR, and owns closure and causal height in a private `string-index`.
+
+The unchanged guest also traverses a provider-generated twelve-node chain on
+native and Wasm. A local execution page is bounded to 128 CIDs / 65536 UTF-8
+key bytes. Google-scale topology comes from CID-addressed IPLD page DAGs, not
+from widening one process-local map; global multi-page scheduling remains an
+explicit open gate. Cycle, forged-offset, and 129th-entry adversarial cases
+fail closed on both execution targets.
 
 Everything below describing `IRefStore`, conditional refs, PostgreSQL, D1, or
 single-writer IPNS is a compatibility/migration surface, not the formal route.

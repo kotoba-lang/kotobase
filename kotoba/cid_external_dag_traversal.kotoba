@@ -5,10 +5,8 @@
   (:export [main check-external-parent-decode check-external-closure
             check-external-causal-height external-frontier-length
             external-envelope-length external-parent-count
-            external-first-parent-length external-closure-0
-            external-closure-1 external-closure-2 external-closure-3
-            external-closure-4 external-closure-5 external-closure-6
-            external-closure-7])
+            external-first-parent-length external-closure-count
+            external-root-height])
   (:capabilities #{:object/get-stream}))
 
 (defn- marker [] :string "67706172656e7473")
@@ -113,116 +111,69 @@
 (defn- fetch [key :string] :string
   (typed-cap-call :object/get-stream :string :string key))
 
-(defn- node-key [node :i64] :string
-  (if (= node 0) (fetch "node0")
-    (if (= node 1) (fetch "node1")
-      (if (= node 2) (fetch "node2")
-        (if (= node 3) (fetch "node3")
-          (if (= node 4) (fetch "node4")
-            (if (= node 5) (fetch "node5")
-              (if (= node 6) (fetch "node6") (fetch "node7")))))))))
-
-(defn- node-from-key [key :string] :i64
-  (- (string-code-point-at (fetch (string-concat "index:" key)) 0) 48))
-
 (defn- fetch-envelope [key :string] :string
   (fetch (string-concat "block:" key)))
 
-(defn- pow2 [index :i64] :i64
-  (if (= index 0) 1
-    (if (= index 1) 2
-      (if (= index 2) 4
-        (if (= index 3) 8
-          (if (= index 4) 16
-            (if (= index 5) 32
-              (if (= index 6) 64 128))))))))
-
-(defn- remainder [value :i64 divisor :i64] :i64
-  (- value (* (quot value divisor) divisor)))
-
-(defn- has-bit [mask :i64 index :i64] :i64
-  (remainder (quot mask (pow2 index)) 2))
-
-(defn- mask-union-loop
-  [left :i64 right :i64 index :i64 total :i64]
-  :i64
-  (if (= index 8)
-    total
-    (mask-union-loop left right (+ index 1)
-                     (+ total (if (= (+ (has-bit left index)
-                                         (has-bit right index)) 0)
-                                0 (pow2 index))))))
-
-(defn- mask-difference-loop
-  [left :i64 right :i64 index :i64 total :i64]
-  :i64
-  (if (= index 8)
-    total
-    (mask-difference-loop
-     left right (+ index 1)
-     (+ total (if (= (* (has-bit left index)
-                         (- 1 (has-bit right index))) 1)
-                (pow2 index) 0)))))
-
-(defn- direct-parent-mask-loop
-  [envelope :string offset :i64 index :i64 count :i64 mask :i64]
-  :i64
-  (if (= index count)
-    mask
-    (let [parent-node (node-from-key
-                       (parent-at-offset envelope offset count index))]
-      (if (< parent-node 0)
-        -1
-        (direct-parent-mask-loop envelope offset (+ index 1) count
-                                 (mask-union-loop mask (pow2 parent-node) 0 0))))))
-
-(defn- direct-parent-mask [node :i64] :i64
-  (let [key (node-key node)
-        envelope (fetch-envelope key)
-        offset (hinted-parents-offset key envelope)
-        count (if (< offset 0) -1 (parent-count-at envelope offset))]
-    (if (< count 0) -1
-      (direct-parent-mask-loop envelope offset 0 count 0))))
-
-(defn- expand-mask-loop
-  [mask :i64 node :i64 expanded :i64]
-  :i64
-  (if (= node 8)
-    expanded
-    (if (= (has-bit mask node) 0)
-      (expand-mask-loop mask (+ node 1) expanded)
-      (let [parents (direct-parent-mask node)]
-        (if (< parents 0) -1
-          (expand-mask-loop mask (+ node 1)
-                            (mask-union-loop expanded parents 0 0)))))))
-
-(defn- closure-rounds
-  [seen :i64 frontier-mask :i64 round :i64]
-  :i64
-  (if (= round 8)
+(defn- closure-node [key :string seen :string-index] :string-index
+  (if (string-index-contains seen key)
     seen
-    (let [parents (expand-mask-loop frontier-mask 0 0)]
-      (if (< parents 0) -1
-        (let [new-nodes (mask-difference-loop parents seen 0 0)]
-          (if (= new-nodes 0)
-            seen
-            (closure-rounds (mask-union-loop seen new-nodes 0 0)
-                            new-nodes (+ round 1))))))))
+    (let [next (string-index-assoc seen key 1)
+          envelope (fetch-envelope key)
+          offset (hinted-parents-offset key envelope)
+          count (if (< offset 0) -1 (parent-count-at envelope offset))]
+      (if (< count 0)
+        ;; An invalid provider hint or envelope must not contribute a node.
+        (string-index-new)
+        (closure-parents envelope offset count 0 next)))))
 
-(defn- closure [node :i64] :i64
-  (closure-rounds (pow2 node) (pow2 node) 0))
+(defn- closure-parents
+  [envelope :string offset :i64 count :i64 index :i64
+   seen :string-index]
+  :string-index
+  (if (= index count)
+    seen
+    (let [parent (parent-at-offset envelope offset count index)
+          expanded (closure-node parent seen)]
+      (closure-parents envelope offset count (+ index 1) expanded))))
 
-(defn- height-frontiers [frontier-mask :i64 depth :i64 round :i64] :i64
-  (if (= frontier-mask 0)
-    depth
-    (if (= round 8)
-      -1
-      (let [parents (expand-mask-loop frontier-mask 0 0)]
-        (if (< parents 0) -1
-          (height-frontiers parents (+ depth 1) (+ round 1)))))))
+(defn- height-node [key :string heights :string-index] :string-index
+  (if (string-index-contains heights key)
+    heights
+    (let [visiting (string-index-assoc heights key -1)
+          envelope (fetch-envelope key)
+          offset (hinted-parents-offset key envelope)
+          count (if (< offset 0) -1 (parent-count-at envelope offset))]
+      (if (< count 0)
+        (string-index-assoc visiting key -2)
+        (let [expanded (height-parents envelope offset count 0 visiting)
+              parent-height (max-parent-height envelope offset 0 expanded -1)]
+          (if (< parent-height -1)
+            (string-index-assoc expanded key -2)
+            (string-index-assoc expanded key (+ parent-height 1))))))))
 
-(defn- height [node :i64] :i64
-  (height-frontiers (pow2 node) -1 0))
+(defn- height-parents
+  [envelope :string offset :i64 count :i64 index :i64
+   heights :string-index]
+  :string-index
+  (if (= index count)
+    heights
+    (let [parent (parent-at-offset envelope offset count index)
+          expanded (height-node parent heights)]
+      (height-parents envelope offset count (+ index 1) expanded))))
+
+(defn- max-parent-height
+  [envelope :string offset :i64 index :i64 heights :string-index maximum :i64]
+  :i64
+  (if (= index (parent-count-at envelope offset))
+    maximum
+    (let [parent (parent-at-offset envelope offset
+                                   (parent-count-at envelope offset) index)
+          value (option-value-of [:option :i64]
+                                 (string-index-get heights parent) -2)]
+      (if (< value 0)
+        -2
+        (max-parent-height envelope offset (+ index 1) heights
+                           (if (> value maximum) value maximum))))))
 
 (defn- frontier [] :string (fetch "frontier"))
 
@@ -235,23 +186,18 @@
 (defn check-external-parent-decode [] :i64
   (if (= (parent-count (fetch-envelope (frontier))) 2) 1 0))
 
-(defn external-closure-0 [] :i64 (closure 0))
-(defn external-closure-1 [] :i64 (closure 1))
-(defn external-closure-2 [] :i64 (closure 2))
-(defn external-closure-3 [] :i64 (closure 3))
-(defn external-closure-4 [] :i64 (closure 4))
-(defn external-closure-5 [] :i64 (closure 5))
-(defn external-closure-6 [] :i64 (closure 6))
-(defn external-closure-7 [] :i64 (closure 7))
+(defn external-closure-count [] :i64
+  (string-index-count (closure-node (frontier) (string-index-new))))
+
+(defn external-root-height [] :i64
+  (let [root (frontier)
+        heights (height-node root (string-index-new))]
+    (option-value-of [:option :i64] (string-index-get heights root) -2)))
 
 (defn check-external-closure [] :i64
-  (let [root-node (node-from-key (frontier))]
-    (if (< root-node 0) 0
-      (if (= (closure root-node) 255) 1 0))))
+  (if (= (external-closure-count) 8) 1 0))
 
 (defn check-external-causal-height [] :i64
-  (let [root-node (node-from-key (frontier))]
-    (if (< root-node 0) 0
-      (if (= (height root-node) 4) 1 0))))
+  (if (= (external-root-height) 4) 1 0))
 
 (defn main [] :i64 (check-external-closure))

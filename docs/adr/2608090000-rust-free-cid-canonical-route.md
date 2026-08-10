@@ -41,14 +41,24 @@ concurrent branches, two crossing merge commits, and a final merge; it proves
 canonical parent order, shared-ancestor closure, deduplication, and causal
 height on both targets.
 `kotoba/cid_external_dag_traversal.kotoba` additionally executes with no
-envelope fixture bytes in the guest. The object capability supplies a bounded
-CID inventory and immutable blocks. Offset hints are non-authoritative and are
-accepted only after Kotoba verifies the `parents` marker at the claimed byte
-position; closure and causal height remain guest-owned and agree on native and
-Wasm.
+envelope fixture bytes or positional CID inventory in the guest. Starting from
+one frontier CID, Kotoba fetches immutable parent blocks directly by CID and
+builds its visited/height indexes with the private native/Wasm `string-index`
+value. Offset hints are non-authoritative and are accepted only after Kotoba
+verifies the `parents` marker at the claimed byte position. The same unchanged
+guest produces closure 8 / height 4 for the formal criss-cross blocks and
+closure 12 / height 11 for a provider-generated chain on both native and Wasm.
 
-The fixed native/Wasm graph-replay flags may therefore be true. Generalized
-graph replay remains false until arbitrary externally supplied transaction and
-DAG inputs pass the same native/Wasm qualification.
+One execution page is intentionally bounded to 128 CIDs and 65536 aggregate
+UTF-8 key bytes. Global scale is a DAG of such CID-addressed IPLD pages; a
+provider listing is neither truth nor a correctness dependency. Qualification
+also proves that cycles return an invalid height, unverified offset hints
+contribute no closure, and a 129th local CID traps on both targets.
+Qualification of the global multi-page scheduler remains an open gate.
+
+The fixed native/Wasm graph-replay and bounded dynamic CID-page traversal flags
+may therefore be true. Generalized transaction replay and the global multi-page
+scheduler remain false until arbitrary externally supplied transaction atoms
+and page DAGs pass the same native/Wasm qualification.
 Cryptographic host capabilities remain narrow, provider-neutral, and
 Rust-free; storage providers never supply graph semantics.
