@@ -1,6 +1,32 @@
 # Kotobase storage architecture
 
-The primary storage compatibility surface is now `kotobase-storage`:
+## Canonical route rule
+
+For the official `kotobase.net` and `kotoba-lang/kotobase` route, canonical
+truth is the caller-selected, signed immutable CID commit DAG. Reads require an
+explicit commit CID or canonical frontier; writes return a new commit CID and
+concurrent writes branch before deterministic merge. No mutable ref is required
+for correctness.
+
+Cloudflare Durable Objects, D1, PostgreSQL, and Rust MUST NOT enter that
+canonical read, write, merge, recovery, query, build, or CI path. S3-compatible
+R2/B2/generic S3 and IPFS may store immutable CID blocks but are untrusted
+availability providers and cannot author or choose graph truth. The canonical
+implementation language is Kotoba, with required native and Wasm execution
+targets. This rule mirrors network-awai/net-kotobase ADR-2608082300 and is
+recorded locally by `docs/adr/2608090000-rust-free-cid-canonical-route.md`.
+The checked-in fixed C3 vector is qualified layer by layer on both actual
+Kotoba targets. A formal eight-commit signed criss-cross fixture also qualifies
+DAG-CBOR parent decoding, shared-ancestor closure, deduplication, and causal
+height on both targets. Generalized externally supplied DAG traversal remains
+an explicit open gate. A provider-supplied bounded slice also executes the same
+eight-node DAG without embedding commit envelopes in the guest: Kotoba verifies
+provider offset hints against DAG-CBOR and owns closure and causal height.
+
+Everything below describing `IRefStore`, conditional refs, PostgreSQL, D1, or
+single-writer IPNS is a compatibility/migration surface, not the formal route.
+
+The legacy storage compatibility surface is `kotobase-storage`:
 
 - immutable CID blocks (`IBlockStore`);
 - mutable conditional database refs (`IRefStore`);
@@ -24,7 +50,8 @@ kotobase-storage       immutable blocks + conditional mutable refs
 
 A PostgreSQL or S3 deployment does not create or require a peer. “Peer” is an
 old implementation detail currently hidden behind `kotobase-engine`.
-IPLD remains the canonical block format in every deployment.
+IPLD remains the canonical block format. Ref-capable deployments do not make
+their ref service authoritative for the official route.
 
 `kotobase.core` is the public database API. Provider repositories construct a
 storage value and pass it to `kotobase/open`; the engine remains provider
@@ -51,7 +78,7 @@ Blocks are globally keyed by CID, enabling safe deduplication. Mutable refs are
 scoped by tenant and database. Provider bytes are untrusted: the engine verifies
 their CID before decoding or using them.
 
-PostgreSQL and S3/R2 expose linearizable conditional refs. IPNS does not offer a
+Compatibility PostgreSQL and S3/R2 adapters expose conditional refs. IPNS does not offer a
 general multi-writer compare-and-set primitive, so the IPFS adapter explicitly
 uses a single-writer profile. Multi-writer IPFS deployments must put a
 linearizable ref service in front of publication instead of pretending IPNS is
