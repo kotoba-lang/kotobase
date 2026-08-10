@@ -89,6 +89,15 @@
     (throw (ex-info "bounded replay page array overflow" {:count count})))
   (format "%02x" (+ 0x80 count)))
 
+(defn- cbor-uint-hex [value]
+  (cond
+    (< value 0) (throw (ex-info "negative CBOR uint" {:value value}))
+    (< value 24) (format "%02x" value)
+    (< value 256) (format "18%02x" value)
+    (< value 65536) (format "19%04x" value)
+    (< value 4294967296) (format "1a%08x" value)
+    :else (throw (ex-info "CBOR uint exceeds v2 page bound" {:value value}))))
+
 (defn- sha256-hex [payload-hex]
   (let [digest (java.security.MessageDigest/getInstance "SHA-256")
         bytes (byte-array
@@ -163,48 +172,51 @@
                    (cbor-text-hex "novelty-back")
                    (dag-link-from-digest-hex novelty-digest)
                    (cbor-text-hex "novelty-count")
-                   (format "%02x" (inc sequence))
+                   (cbor-uint-hex (inc sequence))
                    (cbor-text-hex "novelty-front") "f6")]
-    (str "a3" (cbor-text-hex "seq") (format "%02x" sequence)
+    (str "a3" (cbor-text-hex "seq") (cbor-uint-hex sequence)
          (cbor-text-hex "prev") previous
          (cbor-text-hex "state") "a4" state)))
 
-(defn- replay-checkpoints [transactions]
-  (loop [index 0 previous-novelty "" previous-chain ""
-         novelties [] states []]
-    (if (= index (count transactions))
-      {:state-root (cid-from-digest-hex previous-chain)
-       :novelty-digests novelties :state-digests states}
-      (let [transaction-digest (sha256-hex (nth transactions index))
-            novelty-digest (sha256-hex
-                            (replay-novelty-hex transaction-digest
-                                                previous-novelty))
-            chain-digest (sha256-hex
-                          (replay-chain-hex index previous-chain
-                                            novelty-digest))]
-        (recur (inc index) novelty-digest chain-digest
-               (conj novelties novelty-digest)
-               (conj states chain-digest))))))
+(defn- replay-checkpoints
+  ([transactions] (replay-checkpoints transactions 0 "" ""))
+  ([transactions start-sequence initial-novelty initial-chain]
+   (loop [index 0 previous-novelty initial-novelty
+          previous-chain initial-chain novelties [] states [] state-blocks []]
+     (if (= index (count transactions))
+       {:state-root (cid-from-digest-hex previous-chain)
+        :novelty-digests novelties :state-digests states
+        :state-blocks state-blocks}
+       (let [transaction-digest (sha256-hex (nth transactions index))
+             novelty-digest (sha256-hex
+                             (replay-novelty-hex transaction-digest
+                                                 previous-novelty))
+             chain-block (replay-chain-hex (+ start-sequence index)
+                                           previous-chain novelty-digest)
+             chain-digest (sha256-hex chain-block)]
+         (recur (inc index) novelty-digest chain-digest
+                (conj novelties novelty-digest)
+                (conj states chain-digest)
+                (conj state-blocks chain-block)))))))
 
 (defn- replay-page-entries [transactions]
   (let [transaction-digests (mapv sha256-hex transactions)
         transaction-links (mapv dag-link-from-digest-hex transaction-digests)
-        {:keys [state-root novelty-digests state-digests]}
+        {:keys [state-root state-digests state-blocks]}
         (replay-checkpoints transactions)
         state-links (mapv dag-link-from-digest-hex state-digests)
-        novelty-links (mapv dag-link-from-digest-hex novelty-digests)
-        page (str "a5"
+        page (str "a7"
+                  (cbor-text-hex "next") "f6"
                   (cbor-text-hex "schema")
-                  (cbor-text-hex "kotobase.transaction-replay-page.v1")
+                  (cbor-text-hex "kotobase.transaction-replay-page.v2")
                   (cbor-text-hex "states")
                   (cbor-array-header (count transactions))
                   (apply str state-links)
-                  (cbor-text-hex "novelties")
-                  (cbor-array-header (count transactions))
-                  (apply str novelty-links)
                   (cbor-text-hex "transactions")
                   (cbor-array-header (count transactions))
                   (apply str transaction-links)
+                  (cbor-text-hex "previous_state") "f6"
+                  (cbor-text-hex "start_sequence") (cbor-uint-hex 0)
                   (cbor-text-hex "expected_state_root")
                   (cbor-text-hex state-root))
         page-cid (cid-for-hex page)]
@@ -213,23 +225,154 @@
      :entries
      (into [["frontier" (cbor-text-hex page-cid)]
            [(str "block:" (cbor-text-hex page-cid)) page]]
-           (map (fn [link transaction]
-                  [(str "block:" link) transaction])
-                transaction-links transactions))}))
+           (concat
+            (map (fn [link transaction]
+                   [(str "block:" link) transaction])
+                 transaction-links transactions)
+            (map (fn [link state-block]
+                   [(str "block:" link) state-block])
+                 state-links state-blocks)))}))
+
+(defn- replay-page-hex
+  [{:keys [next-link previous-state-digest start-sequence
+           transactions state-digests]}]
+  (let [transaction-links (mapv (comp dag-link-from-digest-hex sha256-hex)
+                                transactions)
+        state-links (mapv dag-link-from-digest-hex state-digests)
+        state-root (cid-from-digest-hex (peek state-digests))
+        page (str "a7"
+                  (cbor-text-hex "next") (or next-link "f6")
+                  (cbor-text-hex "schema")
+                  (cbor-text-hex "kotobase.transaction-replay-page.v2")
+                  (cbor-text-hex "states")
+                  (cbor-array-header (count state-links))
+                  (apply str state-links)
+                  (cbor-text-hex "transactions")
+                  (cbor-array-header (count transaction-links))
+                  (apply str transaction-links)
+                  (cbor-text-hex "previous_state")
+                  (if (str/blank? previous-state-digest)
+                    "f6" (dag-link-from-digest-hex previous-state-digest))
+                  (cbor-text-hex "start_sequence")
+                  (cbor-uint-hex start-sequence)
+                  (cbor-text-hex "expected_state_root")
+                  (cbor-text-hex state-root))
+        digest (sha256-hex page)]
+    {:page page
+     :page-cid (cid-from-digest-hex digest)
+     :page-link (dag-link-from-digest-hex digest)
+     :transactions transactions
+     :transaction-links transaction-links
+     :state-digests state-digests
+     :previous-state-digest previous-state-digest
+     :start-sequence start-sequence
+     :transaction-count (count transactions)
+     :state-root state-root}))
+
+(defn- replay-page-chain
+  "Build immutable pages from the final page backwards so every earlier page
+  embeds the exact CID of its successor. The provider inventory contains both
+  CID text and DAG-link lookup aliases because a root frontier is a CID text
+  item while an in-page `next` field is a DAG-CBOR link."
+  [transactions page-size]
+  (let [{:keys [state-root state-digests state-blocks]}
+        (replay-checkpoints transactions)
+        ranges (mapv (fn [start]
+                       [start (min (count transactions) (+ start page-size))])
+                     (range 0 (count transactions) page-size))
+        pages
+        (loop [remaining (reverse ranges) next-link "f6" built []]
+          (if-let [[start end] (first remaining)]
+            (let [descriptor
+                  (replay-page-hex
+                   {:next-link next-link
+                    :previous-state-digest (if (zero? start) ""
+                                             (nth state-digests (dec start)))
+                    :start-sequence start
+                    :transactions (subvec transactions start end)
+                    :state-digests (subvec state-digests start end)})]
+              (recur (next remaining) (:page-link descriptor)
+                     (conj built descriptor)))
+            (vec (reverse built))))
+        transaction-links
+        (mapv (comp dag-link-from-digest-hex sha256-hex) transactions)
+        state-links (mapv dag-link-from-digest-hex state-digests)
+        page-entries
+        (mapcat (fn [{:keys [page page-cid page-link]}]
+                  [[(str "block:" (cbor-text-hex page-cid)) page]
+                   [(str "block:" page-link) page]])
+                pages)]
+    {:root-cid (:page-cid (first pages))
+     :state-root state-root
+     :pages pages
+     :entries
+     (vec
+      (concat
+       page-entries
+       (map (fn [link transaction] [(str "block:" link) transaction])
+            transaction-links transactions)
+       (map (fn [link state-block] [(str "block:" link) state-block])
+            state-links state-blocks)))}))
+
+(defn- replay-page-next-link [page]
+  (let [offset (+ 2 (count (cbor-text-hex "next")))]
+    (if (= "f6" (subs page offset (+ offset 2)))
+      "f6"
+      (subs page offset (+ offset 82)))))
+
+(defn- dag-link->cid [link]
+  (cid-from-digest-hex (subs link 18 82)))
+
+(defn- relink-page-chain
+  [chain changed-index changed-page extra-entries]
+  (let [pages-with-change (assoc (:pages chain) changed-index changed-page)
+        pages
+        (loop [index (dec changed-index) rebuilt pages-with-change]
+          (if (neg? index)
+            rebuilt
+            (let [old (nth rebuilt index)
+                  child (nth rebuilt (inc index))
+                  replacement
+                  (replay-page-hex
+                   {:next-link (:page-link child)
+                    :previous-state-digest (:previous-state-digest old)
+                    :start-sequence (:start-sequence old)
+                    :transactions (:transactions old)
+                    :state-digests (:state-digests old)})]
+              (recur (dec index) (assoc rebuilt index replacement)))))
+        page-entries
+        (mapcat (fn [{:keys [page page-cid page-link]}]
+                  [[(str "block:" (cbor-text-hex page-cid)) page]
+                   [(str "block:" page-link) page]])
+                pages)]
+    (assoc chain
+           :root-cid (:page-cid (first pages))
+           :pages pages
+           :entries (vec (concat (:entries chain)
+                                 page-entries extra-entries)))))
+
+(defn- flip-first-hex-nibble [hex]
+  (str (if (= "0" (subs hex 0 1)) "1" "0") (subs hex 1)))
 
 (defn- forge-first-replay-checkpoint [entries]
   (let [page (second (second entries))
         offset (.indexOf ^String page "d82a58250001711220")
+        original-link (subs page offset (+ offset 82))
+        original-block (some (fn [[key value]]
+                               (when (= key (str "block:" original-link)) value))
+                             entries)
         digest-offset (+ offset 18)
         replacement (if (= "0" (subs page digest-offset (inc digest-offset)))
                       "1" "0")
         forged-page (str (subs page 0 digest-offset) replacement
                          (subs page (inc digest-offset)))
+        forged-link (subs forged-page offset (+ offset 82))
         forged-page-cid (cid-for-hex forged-page)]
     (-> entries
         (assoc 0 ["frontier" (cbor-text-hex forged-page-cid)])
         (assoc 1 [(str "block:" (cbor-text-hex forged-page-cid))
-                  forged-page]))))
+                  forged-page])
+        (conj [(str "block:" forged-link) original-block]))))
 
 (defn- external-block-entries []
   (let [fixture-source (slurp (project-file "kotoba" "cid_dag_traversal.kotoba"))
@@ -652,10 +795,21 @@
            [(wire-assert-hex (str "entity:" index) ":value" (str index))]))
         (range 16)))
 
+(def ^:private multi-page-replay-transactions
+  (mapv (fn [index]
+          (public-transaction-hex
+           [(wire-assert-hex (str "page-entity:" index)
+                             ":sequence" (str index))]))
+        (range 40)))
+
+(declare replay-stage-summary)
+
 (defn- run-external-transaction-replay
   [source directory stem entries transaction-count]
   (let [exports
-        (into ["check-page-cid" "transaction-count" "check-replay-root"]
+        (into ["check-page-cid" "transaction-count" "check-replay-root"
+               "check-genesis-boundary" "has-next-page"
+               "check-next-page-boundary"]
               (mapcat
                (fn [index]
                  [{:label (str "transaction-cid-" index)
@@ -672,22 +826,117 @@
      :native (run-native source directory exports (str stem "-native")
                          policy "3,14" provider-file)}))
 
-(defn- replay-stage-summary [results transaction-count]
-  {:page-cid-ok (= 1 (:check-page-cid results))
-   :reported-transaction-count (:transaction-count results)
-   :transaction-cids-ok
-   (every? #(= 1 (get results (keyword (str "transaction-cid-" %))))
-           (range transaction-count))
-   :atom-count
-   (reduce + (map #(get results (keyword (str "transaction-atoms-" %)))
-                  (range transaction-count)))
-   :atoms-ok
-   (every? #(<= 0 (get results (keyword (str "transaction-atoms-" %))))
-           (range transaction-count))
-   :replay-steps-ok
-   (every? #(= 1 (get results (keyword (str "replay-step-" %))))
-           (range transaction-count))
-   :replay-root-ok (= 1 (:check-replay-root results))})
+(defn- replay-page-provider-entries
+  [current entries {:keys [page transaction-links state-digests
+                           previous-state-digest]}]
+  (let [next-link (replay-page-next-link page)
+        entry-map (into {} entries)
+        previous-state-links
+        (cond-> (mapv dag-link-from-digest-hex (butlast state-digests))
+          (not (str/blank? previous-state-digest))
+          (into [(dag-link-from-digest-hex previous-state-digest)]))
+        needed-keys
+        (concat [(str "block:" (cbor-text-hex current))]
+                (when-not (= next-link "f6") [(str "block:" next-link)])
+                (map #(str "block:" %) transaction-links)
+                (map #(str "block:" %) previous-state-links))]
+    (into [["frontier" (cbor-text-hex current)]]
+          (map (fn [key] [key (get entry-map key)]) needed-keys))))
+
+(defn- replay-page-result-ok? [{:keys [wasm native parity]}]
+  (and parity
+       (:page-cid-ok wasm)
+       (:genesis-boundary-ok wasm)
+       (:has-next-page-ok wasm)
+       (:next-page-boundary-ok wasm)
+       (:transaction-cids-ok wasm)
+       (:atoms-ok wasm)
+       (:replay-steps-ok wasm)
+       (:replay-root-ok wasm)
+       (= wasm native)))
+
+(defn- replay-page-revisit? [visited page-cid]
+  (contains? visited page-cid))
+
+(defn- run-replay-page-scheduler
+  [source directory stem {:keys [root-cid entries pages state-root]}]
+  (loop [current root-cid visited #{} page-index 0 total 0 results []]
+    (cond
+      (replay-page-revisit? visited current)
+      {:ok false :error :cycle :page-cid current :results results}
+
+      (>= page-index 128)
+      {:ok false :error :page-budget-exhausted :results results}
+
+      :else
+      (if-let [{:keys [page transaction-count start-sequence
+                       transaction-links state-digests previous-state-digest]
+                :as descriptor}
+               (some #(when (= current (:page-cid %)) %) pages)]
+        (let [next-link (replay-page-next-link page)
+              provider-entries
+              (replay-page-provider-entries current entries descriptor)
+              execution
+              (run-external-transaction-replay
+               source directory (str stem "-page-" page-index)
+               provider-entries transaction-count)
+              has-next (if (= next-link "f6") 0 1)
+              genesis? (zero? page-index)
+              wasm-summary (replay-stage-summary (:results (:wasm execution))
+                                                 transaction-count genesis?
+                                                 has-next)
+              native-summary (replay-stage-summary (:results (:native execution))
+                                                   transaction-count genesis?
+                                                   has-next)
+              record {:page-index page-index :page-cid current
+                      :start-sequence start-sequence
+                      :transaction-count transaction-count
+                      :next-link next-link
+                      :wasm wasm-summary :native native-summary
+                      :parity (= (get-in execution [:wasm :results])
+                                 (get-in execution [:native :results]))}
+              next-results (conj results record)
+              next-total (+ total transaction-count)]
+          (if-not (replay-page-result-ok? record)
+            {:ok false :error :page-validation :page-cid current
+             :page-count (inc page-index) :transaction-count next-total
+             :results next-results}
+            (if (= next-link "f6")
+              {:ok (and (= next-total 40)
+                        (= state-root (:state-root descriptor)))
+               :page-count (inc page-index)
+               :transaction-count next-total
+               :state-root state-root
+               :results next-results}
+              (recur (dag-link->cid next-link)
+                     (conj visited current) (inc page-index)
+                     next-total next-results))))
+        {:ok false :error :missing-page :page-cid current :results results}))))
+
+(defn- replay-stage-summary
+  ([results transaction-count]
+   (replay-stage-summary results transaction-count true 0))
+  ([results transaction-count genesis? expected-has-next]
+   {:page-cid-ok (= 1 (:check-page-cid results))
+    :reported-transaction-count (:transaction-count results)
+    :genesis-boundary-ok (= (if genesis? 1 0)
+                            (:check-genesis-boundary results))
+    :has-next-page (:has-next-page results)
+    :has-next-page-ok (= expected-has-next (:has-next-page results))
+    :next-page-boundary-ok (= 1 (:check-next-page-boundary results))
+    :transaction-cids-ok
+    (every? #(= 1 (get results (keyword (str "transaction-cid-" %))))
+            (range transaction-count))
+    :atom-count
+    (reduce + (map #(get results (keyword (str "transaction-atoms-" %)))
+                   (range transaction-count)))
+    :atoms-ok
+    (every? #(<= 0 (get results (keyword (str "transaction-atoms-" %))))
+            (range transaction-count))
+    :replay-steps-ok
+    (every? #(= 1 (get results (keyword (str "replay-step-" %))))
+            (range transaction-count))
+    :replay-root-ok (= 1 (:check-replay-root results))}))
 
 (deftest provider-supplied-transaction-atoms-replay-in-kotoba
   (let [source (slurp (project-file "kotoba"
@@ -701,6 +950,9 @@
               (run-external-transaction-replay source directory
                                                "canonical-replay" entries 3)
               expected {:page-cid-ok true :reported-transaction-count 3
+                        :genesis-boundary-ok true :has-next-page 0
+                        :has-next-page-ok true
+                        :next-page-boundary-ok true
                         :transaction-cids-ok true :atom-count 6 :atoms-ok true
                         :replay-steps-ok true
                         :replay-root-ok true}]
@@ -718,6 +970,9 @@
               (run-external-transaction-replay source directory
                                                "generated-replay" entries 5)
               expected {:page-cid-ok true :reported-transaction-count 5
+                        :genesis-boundary-ok true :has-next-page 0
+                        :has-next-page-ok true
+                        :next-page-boundary-ok true
                         :transaction-cids-ok true :atom-count 8 :atoms-ok true
                         :replay-steps-ok true
                         :replay-root-ok true}]
@@ -740,6 +995,9 @@
               (run-external-transaction-replay source directory
                                                "boundary-replay" entries 16)
               expected {:page-cid-ok true :reported-transaction-count 16
+                        :genesis-boundary-ok true :has-next-page 0
+                        :has-next-page-ok true
+                        :next-page-boundary-ok true
                         :transaction-cids-ok true :atom-count 16 :atoms-ok true
                         :replay-steps-ok true
                         :replay-root-ok true}]
@@ -751,6 +1009,133 @@
                     :transaction-count 16 :atom-count 16
                     :wasm wasm :native native
                     :sealed-page-limit-qualified true}))))
+      (finally (delete-tree! directory)))))
+
+(deftest cid-linked-multi-page-replay-scheduler
+  (let [source (slurp (project-file "kotoba"
+                                    "cid_external_transaction_replay.kotoba"))
+        directory (temp-dir)
+        chain (replay-page-chain multi-page-replay-transactions 16)]
+    (try
+      (let [result (run-replay-page-scheduler source directory
+                                              "multi-page-replay" chain)]
+        (is (:ok result) (pr-str result))
+        (is (= 3 (:page-count result)))
+        (is (= 40 (:transaction-count result)))
+        (is (= [0 16 32] (mapv :start-sequence (:results result))))
+        (is (= [16 16 8] (mapv :transaction-count (:results result))))
+        (is (= [1 1 0]
+               (mapv #(get-in % [:wasm :has-next-page]) (:results result))))
+        (is (= 3 (count (set (map :page-cid (:results result)))))
+            "the scheduler must visit three distinct immutable page CIDs")
+        (is (str/includes? (:page (nth (:pages chain) 2))
+                           (str (cbor-text-hex "start_sequence") "1820"))
+            "sequence 32 must use canonical CBOR uint8 encoding")
+        (println
+         (pr-str {:schema :kotobase.cid-linked-transaction-page-chain/v1
+                  :root-page-cid (:root-cid chain)
+                  :state-root (:state-root result)
+                  :page-count (:page-count result)
+                  :page-transaction-counts
+                  (mapv :transaction-count (:results result))
+                  :transaction-count (:transaction-count result)
+                  :native-wasm-parity true
+                  :client-followed-next-cids true
+                  :cycle-budget 128
+                  :rust-required false
+                  :cid-linked-transaction-page-chain-qualified true
+                  :arbitrary-branching-page-dag-qualified false
+                  :unbounded-replay-qualified false
+                  :google-scale-qualified false
+                  :public-cloud-qualified false
+                  :neo4j-performance-qualified false})))
+      (finally (delete-tree! directory)))))
+
+(deftest forged-multi-page-boundaries-fail-closed
+  (let [source (slurp (project-file "kotoba"
+                                    "cid_external_transaction_replay.kotoba"))
+        directory (temp-dir)
+        chain (replay-page-chain multi-page-replay-transactions 16)
+        first-page (first (:pages chain))
+        second-page (second (:pages chain))]
+    (try
+      (testing "bytes under the claimed next-page CID are rejected"
+        (let [next-link (replay-page-next-link (:page first-page))
+              next-key (str "block:" next-link)
+              original-next (get (into {} (:entries chain)) next-key)
+              forged-entries (conj (:entries chain)
+                                   [next-key (flip-first-hex-nibble original-next)])
+              provider (replay-page-provider-entries
+                        (:root-cid chain) forged-entries first-page)
+              {:keys [wasm native]}
+              (run-external-transaction-replay
+               source directory "forged-next-bytes" provider 16)]
+          (is (= 1 (get-in wasm [:results :check-page-cid])))
+          (is (= 0 (get-in wasm [:results :check-next-page-boundary])))
+          (is (= (:results wasm) (:results native)))))
+
+      (testing "a CID-consistent next page cannot skip a sequence"
+        (let [forged-second
+              (replay-page-hex
+               {:next-link (replay-page-next-link (:page second-page))
+                :previous-state-digest (:previous-state-digest second-page)
+                :start-sequence 17
+                :transactions (:transactions second-page)
+                :state-digests (:state-digests second-page)})
+              forged-chain (relink-page-chain chain 1 forged-second [])
+              result (run-replay-page-scheduler source directory
+                                                "forged-sequence"
+                                                forged-chain)]
+          (is (= :page-validation (:error result)))
+          (is (false? (get-in result [:results 0 :wasm
+                                      :next-page-boundary-ok]))
+              "the first page must reject successor sequence 17 after 16 items")
+          (is (= (get-in result [:results 0 :wasm])
+                 (get-in result [:results 0 :native])))))
+
+      (testing "a CID-consistent next page cannot forge previous_state"
+        (let [forged-previous
+              (flip-first-hex-nibble (:previous-state-digest second-page))
+              forged-second
+              (replay-page-hex
+               {:next-link (replay-page-next-link (:page second-page))
+                :previous-state-digest forged-previous
+                :start-sequence (:start-sequence second-page)
+                :transactions (:transactions second-page)
+                :state-digests (:state-digests second-page)})
+              forged-chain (relink-page-chain chain 1 forged-second [])
+              result (run-replay-page-scheduler source directory
+                                                "forged-previous-state"
+                                                forged-chain)]
+          (is (= :page-validation (:error result)))
+          (is (false? (get-in result [:results 0 :wasm
+                                      :next-page-boundary-ok])))
+          (is (= (get-in result [:results 0 :wasm])
+                 (get-in result [:results 0 :native])))))
+
+      (testing "self-reference fails CID verification and the host tracks revisits"
+        (let [next-offset (+ 2 (count (cbor-text-hex "next")))
+              page (:page first-page)
+              self-page (str (subs page 0 next-offset)
+                             (:page-link first-page)
+                             (subs page (+ next-offset 82)))
+              self-descriptor (assoc first-page :page self-page)
+              self-entries
+              (conj (:entries chain)
+                    [(str "block:" (cbor-text-hex (:page-cid first-page)))
+                     self-page]
+                    [(str "block:" (:page-link first-page)) self-page])
+              provider (replay-page-provider-entries
+                        (:page-cid first-page) self-entries self-descriptor)
+              {:keys [wasm native]}
+              (run-external-transaction-replay
+               source directory "forged-self-cycle" provider 16)]
+          (is (= 0 (get-in wasm [:results :check-page-cid])))
+          (is (= 0 (get-in wasm [:results :check-next-page-boundary])))
+          (is (= (:results wasm) (:results native)))
+          (is (replay-page-revisit? #{(:page-cid first-page)}
+                                    (:page-cid first-page)))
+          (is (not (replay-page-revisit? #{} (:page-cid first-page))))))
       (finally (delete-tree! directory)))))
 
 (deftest forged-external-transaction-pages-fail-closed

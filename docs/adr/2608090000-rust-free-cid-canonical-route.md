@@ -57,24 +57,38 @@ contribute no closure, and a 129th local CID traps on both targets.
 Qualification of the global multi-page scheduler remains an open gate.
 
 `kotoba/cid_external_transaction_replay.kotoba` removes transaction fixtures
-from the guest. The provider supplies one CID-addressed replay page containing
-parallel arrays of up to 16 transaction, novelty, and state-checkpoint DAG-CBOR
-CID links plus an expected state root. In separate bounded stages, Kotoba
-verifies the page CID, every linked transaction digest, canonical public
-transaction blocks and `s/p/o/op` quad maps, and every novelty/chain transition
+from the guest. The provider supplies CID-addressed
+`kotobase.transaction-replay-page.v2` blocks containing up to 16 transaction
+and state-checkpoint DAG-CBOR links, `next`, `previous_state`,
+`start_sequence`, and an expected state root. The provider no longer supplies
+novelty checkpoints: Kotoba fetches the previous state by CID, verifies its
+digest, parses its novelty-back link, and derives the next novelty and state.
+In separate bounded stages, Kotoba verifies the page CID, every linked
+transaction and state digest, canonical public transaction blocks and
+`s/p/o/op` quad maps, page boundaries, and every novelty/chain transition
 before binding the final checkpoint to the expected root. Splitting the stages
 keeps each native invocation inside the sealed tender arena; acceptance is the
-conjunction of every per-index stage, never `main` or the root check alone. The
-public guest API deliberately has no aggregate transaction scan. The unchanged
-guest replays the canonical three-transaction/six-atom vector, a
-provider-generated five-transaction/eight-atom vector, and the actual sealed
-page boundary of 16 transactions/16 atoms identically on native and Wasm.
-Wrong-CID bytes, malformed quad maps, and a forged intermediate state
-checkpoint all fail closed even when the claimed final root is unchanged.
+conjunction of every page boundary and per-index stage, never `main` or the root
+check alone. The public guest API deliberately has no aggregate transaction
+scan.
 
-The fixed graph-replay, bounded dynamic CID traversal, and bounded external
-transaction-page replay flags may therefore be true. The global multi-page
-scheduler and unbounded replay remain false until page-DAG scheduling passes
-the same native/Wasm qualification.
+The client scheduler follows the verified `next` CID and carries only a bounded
+working set into each guest invocation. It rejects sequence discontinuity,
+wrong `previous_state`, bytes that do not hash to the claimed successor CID,
+and revisits/cycles, and it applies an explicit 128-page execution budget. The
+unchanged guest replays the canonical three-transaction/six-atom vector, a
+provider-generated five-transaction/eight-atom vector, the actual sealed page
+boundary of 16 transactions/16 atoms, and a 40-transaction chain split into
+16/16/8 pages at start sequences 0/16/32 identically on native and Wasm.
+Wrong-CID bytes, malformed quad maps, a forged intermediate state checkpoint,
+a CID-consistent skipped sequence, a forged previous state, and a forged
+self-reference all fail closed.
+
+The fixed graph replay, bounded dynamic CID traversal, bounded external
+transaction-page replay, and bounded linear CID-linked transaction page-chain
+scheduler flags may therefore be true. This does not qualify an arbitrary
+branching page DAG, unbounded replay, Google-scale operation, public-cloud
+operation, or performance relative to Neo4j; those claims remain false until
+their corresponding evidence gates pass.
 Cryptographic host capabilities remain narrow, provider-neutral, and
 Rust-free; storage providers never supply graph semantics.
