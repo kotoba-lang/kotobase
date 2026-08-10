@@ -56,9 +56,25 @@ also proves that cycles return an invalid height, unverified offset hints
 contribute no closure, and a 129th local CID traps on both targets.
 Qualification of the global multi-page scheduler remains an open gate.
 
-The fixed native/Wasm graph-replay and bounded dynamic CID-page traversal flags
-may therefore be true. Generalized transaction replay and the global multi-page
-scheduler remain false until arbitrary externally supplied transaction atoms
-and page DAGs pass the same native/Wasm qualification.
+`kotoba/cid_external_transaction_replay.kotoba` removes transaction fixtures
+from the guest. The provider supplies one CID-addressed replay page containing
+parallel arrays of up to 16 transaction, novelty, and state-checkpoint DAG-CBOR
+CID links plus an expected state root. In separate bounded stages, Kotoba
+verifies the page CID, every linked transaction digest, canonical public
+transaction blocks and `s/p/o/op` quad maps, and every novelty/chain transition
+before binding the final checkpoint to the expected root. Splitting the stages
+keeps each native invocation inside the sealed tender arena; acceptance is the
+conjunction of every per-index stage, never `main` or the root check alone. The
+public guest API deliberately has no aggregate transaction scan. The unchanged
+guest replays the canonical three-transaction/six-atom vector, a
+provider-generated five-transaction/eight-atom vector, and the actual sealed
+page boundary of 16 transactions/16 atoms identically on native and Wasm.
+Wrong-CID bytes, malformed quad maps, and a forged intermediate state
+checkpoint all fail closed even when the claimed final root is unchanged.
+
+The fixed graph-replay, bounded dynamic CID traversal, and bounded external
+transaction-page replay flags may therefore be true. The global multi-page
+scheduler and unbounded replay remain false until page-DAG scheduling passes
+the same native/Wasm qualification.
 Cryptographic host capabilities remain narrow, provider-neutral, and
 Rust-free; storage providers never supply graph semantics.

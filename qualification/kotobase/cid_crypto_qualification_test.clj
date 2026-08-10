@@ -5,7 +5,8 @@
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [kotoba.compiler.core :as compiler])
-  (:import [java.nio.file Files]
+  (:import [java.nio.charset StandardCharsets]
+           [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
 (def ^:private capability-policy
@@ -64,6 +65,171 @@
 
 (defn- cbor-text-item-hex [value]
   (str "783b" (apply str (map #(format "%02x" (int %)) value))))
+
+(defn- bytes->hex [^bytes value]
+  (apply str (map #(format "%02x" (bit-and (int %) 0xff)) value)))
+
+(defn- utf8-hex [value]
+  (bytes->hex (.getBytes ^String value StandardCharsets/UTF_8)))
+
+(defn- cbor-text-hex [value]
+  (let [length (alength (.getBytes ^String value StandardCharsets/UTF_8))]
+    (str (if (< length 24) (format "%02x" (+ 0x60 length))
+           (str "78" (format "%02x" length)))
+         (utf8-hex value))))
+
+(defn- cbor-bytes-hex [payload-hex]
+  (let [length (quot (count payload-hex) 2)]
+    (str (if (< length 24) (format "%02x" (+ 0x40 length))
+           (str "58" (format "%02x" length)))
+         payload-hex)))
+
+(defn- cbor-array-header [count]
+  (when-not (<= 0 count 16)
+    (throw (ex-info "bounded replay page array overflow" {:count count})))
+  (format "%02x" (+ 0x80 count)))
+
+(defn- sha256-hex [payload-hex]
+  (let [digest (java.security.MessageDigest/getInstance "SHA-256")
+        bytes (byte-array
+               (map #(unchecked-byte (Integer/parseInt % 16))
+                    (map (partial apply str) (partition 2 payload-hex))))]
+    (bytes->hex (.digest digest bytes))))
+
+(defn- base32-lower [^bytes input]
+  (let [alphabet "abcdefghijklmnopqrstuvwxyz234567"]
+    (loop [offset 0 buffer 0 bits 0 output (StringBuilder.)]
+      (if (>= bits 5)
+        (let [remaining (- bits 5)
+              divisor (bit-shift-left 1 remaining)
+              index (quot buffer divisor)]
+          (.append output (.charAt alphabet index))
+          (recur offset (mod buffer divisor) remaining output))
+        (if (< offset (alength input))
+          (recur (inc offset)
+                 (+ (* buffer 256) (bit-and (aget input offset) 0xff))
+                 (+ bits 8) output)
+          (do
+            (when (pos? bits)
+              (.append output (.charAt alphabet
+                                       (* buffer (bit-shift-left 1 (- 5 bits))))))
+            (str output)))))))
+
+(defn- cid-from-digest-hex [digest-hex]
+  (let [prefix (byte-array [(byte 0x01) (byte 0x71) (byte 0x12) (byte 0x20)])
+        digest (byte-array
+                (map #(unchecked-byte (Integer/parseInt % 16))
+                     (map (partial apply str) (partition 2 digest-hex))))
+        cid-bytes (byte-array (+ (alength prefix) (alength digest)))]
+    (System/arraycopy prefix 0 cid-bytes 0 (alength prefix))
+    (System/arraycopy digest 0 cid-bytes (alength prefix) (alength digest))
+    (str "b" (base32-lower cid-bytes))))
+
+(defn- cid-for-hex [payload-hex]
+  (cid-from-digest-hex (sha256-hex payload-hex)))
+
+(defn- dag-link-from-digest-hex [digest-hex]
+  (str "d82a58250001711220" digest-hex))
+
+(defn- wire-assert-hex [subject predicate object]
+  (str "a3"
+       (cbor-text-hex "o") (cbor-text-hex object)
+       (cbor-text-hex "p") (cbor-text-hex predicate)
+       (cbor-text-hex "s") (cbor-text-hex subject)))
+
+(defn- wire-retract-hex [subject predicate object]
+  (str "a4"
+       (cbor-text-hex "o") (cbor-text-hex object)
+       (cbor-text-hex "p") (cbor-text-hex predicate)
+       (cbor-text-hex "s") (cbor-text-hex subject)
+       (cbor-text-hex "op") (cbor-text-hex "retract")))
+
+(defn- public-transaction-hex [quads]
+  (let [plaintext (str "a1" (cbor-text-hex "quads")
+                       (cbor-array-header (count quads))
+                       (apply str quads))]
+    (str "a1" (cbor-text-hex "ct") (cbor-bytes-hex plaintext))))
+
+(defn- replay-novelty-hex [transaction-digest previous-novelty]
+  (str "a2" (cbor-text-hex "e") (dag-link-from-digest-hex transaction-digest)
+       (cbor-text-hex "rest")
+       (if (str/blank? previous-novelty)
+         "f6" (dag-link-from-digest-hex previous-novelty))))
+
+(defn- replay-chain-hex [sequence previous-chain novelty-digest]
+  (let [previous (if (str/blank? previous-chain)
+                   "f6" (dag-link-from-digest-hex previous-chain))
+        state (str (cbor-text-hex "indexed") "f6"
+                   (cbor-text-hex "novelty-back")
+                   (dag-link-from-digest-hex novelty-digest)
+                   (cbor-text-hex "novelty-count")
+                   (format "%02x" (inc sequence))
+                   (cbor-text-hex "novelty-front") "f6")]
+    (str "a3" (cbor-text-hex "seq") (format "%02x" sequence)
+         (cbor-text-hex "prev") previous
+         (cbor-text-hex "state") "a4" state)))
+
+(defn- replay-checkpoints [transactions]
+  (loop [index 0 previous-novelty "" previous-chain ""
+         novelties [] states []]
+    (if (= index (count transactions))
+      {:state-root (cid-from-digest-hex previous-chain)
+       :novelty-digests novelties :state-digests states}
+      (let [transaction-digest (sha256-hex (nth transactions index))
+            novelty-digest (sha256-hex
+                            (replay-novelty-hex transaction-digest
+                                                previous-novelty))
+            chain-digest (sha256-hex
+                          (replay-chain-hex index previous-chain
+                                            novelty-digest))]
+        (recur (inc index) novelty-digest chain-digest
+               (conj novelties novelty-digest)
+               (conj states chain-digest))))))
+
+(defn- replay-page-entries [transactions]
+  (let [transaction-digests (mapv sha256-hex transactions)
+        transaction-links (mapv dag-link-from-digest-hex transaction-digests)
+        {:keys [state-root novelty-digests state-digests]}
+        (replay-checkpoints transactions)
+        state-links (mapv dag-link-from-digest-hex state-digests)
+        novelty-links (mapv dag-link-from-digest-hex novelty-digests)
+        page (str "a5"
+                  (cbor-text-hex "schema")
+                  (cbor-text-hex "kotobase.transaction-replay-page.v1")
+                  (cbor-text-hex "states")
+                  (cbor-array-header (count transactions))
+                  (apply str state-links)
+                  (cbor-text-hex "novelties")
+                  (cbor-array-header (count transactions))
+                  (apply str novelty-links)
+                  (cbor-text-hex "transactions")
+                  (cbor-array-header (count transactions))
+                  (apply str transaction-links)
+                  (cbor-text-hex "expected_state_root")
+                  (cbor-text-hex state-root))
+        page-cid (cid-for-hex page)]
+    {:state-root state-root
+     :page-cid page-cid
+     :entries
+     (into [["frontier" (cbor-text-hex page-cid)]
+           [(str "block:" (cbor-text-hex page-cid)) page]]
+           (map (fn [link transaction]
+                  [(str "block:" link) transaction])
+                transaction-links transactions))}))
+
+(defn- forge-first-replay-checkpoint [entries]
+  (let [page (second (second entries))
+        offset (.indexOf ^String page "d82a58250001711220")
+        digest-offset (+ offset 18)
+        replacement (if (= "0" (subs page digest-offset (inc digest-offset)))
+                      "1" "0")
+        forged-page (str (subs page 0 digest-offset) replacement
+                         (subs page (inc digest-offset)))
+        forged-page-cid (cid-for-hex forged-page)]
+    (-> entries
+        (assoc 0 ["frontier" (cbor-text-hex forged-page-cid)])
+        (assoc 1 [(str "block:" (cbor-text-hex forged-page-cid))
+                  forged-page]))))
 
 (defn- external-block-entries []
   (let [fixture-source (slurp (project-file "kotoba" "cid_dag_traversal.kotoba"))
@@ -124,11 +290,29 @@
                           entries))
        "])"))
 
+(defn- normalize-invocations [exports]
+  (mapv (fn [export]
+          (if (string? export)
+            {:label export :export export :args []}
+            export))
+        exports))
+
+(defn- javascript-invocations [invocations]
+  (str "["
+       (str/join
+        ","
+        (map (fn [{:keys [label export args]}]
+               (str "{label:" (pr-str label) ",name:" (pr-str export)
+                    ",args:[" (str/join "," (map #(str % "n") args)) "]}"))
+             invocations))
+       "]"))
+
 (defn- run-wasm
   ([source directory export-names stem]
    (run-wasm source directory export-names stem capability-policy [1 3] []))
   ([source directory export-names stem policy allow-capabilities block-entries]
-  (let [compiled (compiler/compile-source source :wasm32-kotoba-v1
+  (let [invocations (normalize-invocations export-names)
+        compiled (compiler/compile-source source :wasm32-kotoba-v1
                                           policy execution-metadata)
         artifact (io/file directory (str stem ".wasm"))
         browser-host (io/file (compiler-root) "runtime/browser-host.mjs")
@@ -147,10 +331,10 @@
              "if(id===3)return c.createHash('sha256').update(msg).digest('hex');"
              "if(id===1)return pub.toString('hex')+':'+c.sign(null,msg,key).toString('hex');"
              "throw Error('capability-denied')};"
-             "for(const name of [" (str/join "," (map pr-str export-names)) "]){"
+             "for(const call of " (javascript-invocations invocations) "){"
              "const h=await m.instantiateKotoba(bytes,{allowCapabilities:["
              (str/join "," allow-capabilities) "],typedCapCall:provider});"
-             "console.log(name+'='+h.instance.exports[name]().toString());}"
+             "console.log(call.label+'='+h.instance.exports[call.name](...call.args).toString());}"
              "}).catch(e=>{console.error(e);process.exit(70)})")]
     (write-bytes! artifact (:bytes compiled))
     (let [{:keys [exit out err]}
@@ -176,7 +360,8 @@
   ([source directory export-names stem]
    (run-native source directory export-names stem capability-policy "1,3" nil))
   ([source directory export-names stem policy allow-csv block-provider-file]
-  (let [[target isa] (host-target)
+  (let [invocations (normalize-invocations export-names)
+        [target isa] (host-target)
         compiled (compiler/compile-source source target
                                           policy execution-metadata)
         code (io/file directory (str stem ".bin"))
@@ -192,7 +377,7 @@
                               (.getPath loader-source) (.getPath provider-source)
                               "-o" (.getPath loader)]
                              (openssl-flags)))
-        export-symbols (mapv symbol export-names)]
+        export-symbols (mapv #(assoc % :symbol (symbol (:export %))) invocations)]
     (when-not (zero? (:exit build))
       (throw (ex-info "Kotoba native crypto loader build failed" build)))
     (write-bytes! code
@@ -201,20 +386,22 @@
                         (get-in compiled [:artifact :code]))))
     (let [results
           (into {}
-                (map (fn [export-name]
-                       (let [offset (get-in compiled [:artifact :exports export-name :offset])
+                (map (fn [{:keys [label symbol args]}]
+                       (let [offset (get-in compiled [:artifact :exports symbol :offset])
                              {:keys [exit out err]}
                              (apply shell/sh
                                     (concat [(.getPath loader) (.getPath code)
-                                             (str offset) "0" isa allow-csv]
+                                             (str offset) (str (count args)) isa allow-csv]
+                                            (map str args)
                                             [:env (cond-> {"KEXE_STRUCTURED_REPORT" "1"}
                                                     block-provider-file
                                                     (assoc "KOTOBASE_BLOCK_PROVIDER_FILE"
                                                            (.getPath block-provider-file)))]))]
                          (when-not (zero? exit)
                            (throw (ex-info "Kotoba native crypto execution failed"
-                                           {:export export-name :exit exit :stderr err})))
-                         [(keyword (name export-name))
+                                           {:export symbol :args args
+                                            :exit exit :stderr err})))
+                         [(keyword label)
                           (:result (edn/read-string (str/trim out)))])))
                 export-symbols)]
       {:format (:format compiled)
@@ -431,4 +618,188 @@
                        (run-native source directory ["external-closure-count"]
                                    "cid-page-overflow"
                                    external-capability-policy "14" provider-file)))))
+      (finally (delete-tree! directory)))))
+
+(def ^:private canonical-replay-transactions
+  [(public-transaction-hex
+    [(wire-assert-hex "e1" ":name" "Alice")
+     (wire-assert-hex "e1" ":status" "base")])
+   (public-transaction-hex
+    [(wire-retract-hex "e1" ":status" "base")
+     (wire-assert-hex "e1" ":status" "branch-a")])
+   (public-transaction-hex
+    [(wire-assert-hex "e2" ":name" "Bob")
+     (wire-assert-hex "e1" ":status" "branch-b")])])
+
+(def ^:private generated-replay-transactions
+  [(public-transaction-hex
+    [(wire-assert-hex "doc:1" ":title" "one")])
+   (public-transaction-hex
+    [(wire-assert-hex "doc:1" ":tag" "a")
+     (wire-assert-hex "doc:2" ":title" "two")])
+   (public-transaction-hex
+    [(wire-retract-hex "doc:1" ":tag" "a")
+     (wire-assert-hex "doc:1" ":tag" "b")])
+   (public-transaction-hex
+    [(wire-assert-hex "doc:3" ":title" "three")])
+   (public-transaction-hex
+    [(wire-assert-hex "doc:2" ":tag" "shared")
+     (wire-retract-hex "doc:3" ":title" "three")])])
+
+(def ^:private boundary-replay-transactions
+  (mapv (fn [index]
+          (public-transaction-hex
+           [(wire-assert-hex (str "entity:" index) ":value" (str index))]))
+        (range 16)))
+
+(defn- run-external-transaction-replay
+  [source directory stem entries transaction-count]
+  (let [exports
+        (into ["check-page-cid" "transaction-count" "check-replay-root"]
+              (mapcat
+               (fn [index]
+                 [{:label (str "transaction-cid-" index)
+                   :export "check-transaction-cid-at" :args [index]}
+                  {:label (str "transaction-atoms-" index)
+                   :export "transaction-atom-count-at" :args [index]}
+                  {:label (str "replay-step-" index)
+                   :export "check-replay-step-at" :args [index]}])
+               (range transaction-count)))
+        policy {:allow #{[:cap/call 3] [:cap/call 14]}}
+        provider-file (write-block-provider! directory entries)]
+    {:wasm (run-wasm source directory exports (str stem "-wasm")
+                      policy [3 14] entries)
+     :native (run-native source directory exports (str stem "-native")
+                         policy "3,14" provider-file)}))
+
+(defn- replay-stage-summary [results transaction-count]
+  {:page-cid-ok (= 1 (:check-page-cid results))
+   :reported-transaction-count (:transaction-count results)
+   :transaction-cids-ok
+   (every? #(= 1 (get results (keyword (str "transaction-cid-" %))))
+           (range transaction-count))
+   :atom-count
+   (reduce + (map #(get results (keyword (str "transaction-atoms-" %)))
+                  (range transaction-count)))
+   :atoms-ok
+   (every? #(<= 0 (get results (keyword (str "transaction-atoms-" %))))
+           (range transaction-count))
+   :replay-steps-ok
+   (every? #(= 1 (get results (keyword (str "replay-step-" %))))
+           (range transaction-count))
+   :replay-root-ok (= 1 (:check-replay-root results))})
+
+(deftest provider-supplied-transaction-atoms-replay-in-kotoba
+  (let [source (slurp (project-file "kotoba"
+                                    "cid_external_transaction_replay.kotoba"))
+        directory (temp-dir)]
+    (try
+      (testing "the canonical three transactions are no longer guest fixtures"
+        (let [{:keys [entries state-root]} (replay-page-entries
+                                           canonical-replay-transactions)
+              {:keys [wasm native]}
+              (run-external-transaction-replay source directory
+                                               "canonical-replay" entries 3)
+              expected {:page-cid-ok true :reported-transaction-count 3
+                        :transaction-cids-ok true :atom-count 6 :atoms-ok true
+                        :replay-steps-ok true
+                        :replay-root-ok true}]
+          (is (= "bafyreiglqe64tpi5fig43xbm3fequec2q53tjk2sb3mkooxejb6rqamyee"
+                 state-root))
+          (is (every? #(not (str/includes? source %))
+                      canonical-replay-transactions))
+          (is (= expected (replay-stage-summary (:results wasm) 3)))
+          (is (= expected (replay-stage-summary (:results native) 3)))
+          (is (= (:results wasm) (:results native)))))
+      (testing "the unchanged guest replays a provider-generated five-transaction page"
+        (let [{:keys [entries state-root page-cid]}
+              (replay-page-entries generated-replay-transactions)
+              {:keys [wasm native]}
+              (run-external-transaction-replay source directory
+                                               "generated-replay" entries 5)
+              expected {:page-cid-ok true :reported-transaction-count 5
+                        :transaction-cids-ok true :atom-count 8 :atoms-ok true
+                        :replay-steps-ok true
+                        :replay-root-ok true}]
+          (is (= expected (replay-stage-summary (:results wasm) 5)))
+          (is (= expected (replay-stage-summary (:results native) 5)))
+          (is (= (:results wasm) (:results native)))
+          (println
+           (pr-str {:schema :kotobase.external-transaction-replay-qualification/v1
+                    :source "kotoba/cid_external_transaction_replay.kotoba"
+                    :page-cid page-cid :state-root state-root
+                    :transaction-count 5 :atom-count 8
+                    :wasm wasm :native native
+                    :provider-supplied-atoms-qualified true
+                    :local-page-transaction-limit 16
+                    :global-page-dag-qualified false}))))
+      (testing "the sealed page limit is executable, not only parser metadata"
+        (let [{:keys [entries]}
+              (replay-page-entries boundary-replay-transactions)
+              {:keys [wasm native]}
+              (run-external-transaction-replay source directory
+                                               "boundary-replay" entries 16)
+              expected {:page-cid-ok true :reported-transaction-count 16
+                        :transaction-cids-ok true :atom-count 16 :atoms-ok true
+                        :replay-steps-ok true
+                        :replay-root-ok true}]
+          (is (= expected (replay-stage-summary (:results wasm) 16)))
+          (is (= expected (replay-stage-summary (:results native) 16)))
+          (is (= (:results wasm) (:results native)))
+          (println
+           (pr-str {:schema :kotobase.external-transaction-boundary-qualification/v1
+                    :transaction-count 16 :atom-count 16
+                    :wasm wasm :native native
+                    :sealed-page-limit-qualified true}))))
+      (finally (delete-tree! directory)))))
+
+(deftest forged-external-transaction-pages-fail-closed
+  (let [source (slurp (project-file "kotoba"
+                                    "cid_external_transaction_replay.kotoba"))
+        directory (temp-dir)]
+    (try
+      (testing "bytes under a claimed transaction CID cannot alter replay"
+        (let [{:keys [entries]} (replay-page-entries canonical-replay-transactions)
+              forged (update-in entries [2 1]
+                                #(str (subs % 0 (dec (count %)))
+                                      (if (= "0" (subs % (dec (count %))))
+                                        "1" "0")))
+              {:keys [wasm native]}
+              (run-external-transaction-replay source directory
+                                               "forged-cid" forged 3)]
+          (is (= 1 (get-in wasm [:results :check-page-cid])))
+          (is (= 0 (get-in wasm [:results :transaction-cid-0])))
+          (is (= 0 (get-in wasm [:results :replay-step-0])))
+          (is (= 1 (get-in wasm [:results :check-replay-root]))
+              "the final-root stage is accepted only with every preceding step")
+          (is (= (:results wasm) (:results native)))))
+      (testing "a CID-consistent page with a malformed quad is rejected"
+        (let [malformed (assoc canonical-replay-transactions 0
+                               (str/replace-first
+                                (first canonical-replay-transactions) "a3" "a2"))
+              {:keys [entries]} (replay-page-entries malformed)
+              {:keys [wasm native]}
+              (run-external-transaction-replay source directory
+                                               "malformed-quad" entries 3)]
+          (is (= 1 (get-in wasm [:results :check-page-cid])))
+          (is (= 3 (get-in wasm [:results :transaction-count])))
+          (is (= -1 (get-in wasm [:results :transaction-atoms-0])))
+          (is (= 1 (get-in wasm [:results :transaction-cid-0])))
+          (is (= 1 (get-in wasm [:results :replay-step-0])))
+          (is (= 1 (get-in wasm [:results :check-replay-root]))
+              "the root stage is byte-deterministic; atom admission is a separate fail-closed stage")
+          (is (= (:results wasm) (:results native)))))
+      (testing "a CID-consistent page cannot forge an intermediate checkpoint"
+        (let [{:keys [entries]} (replay-page-entries canonical-replay-transactions)
+              forged (forge-first-replay-checkpoint entries)
+              {:keys [wasm native]}
+              (run-external-transaction-replay source directory
+                                               "forged-checkpoint" forged 3)]
+          (is (= 1 (get-in wasm [:results :check-page-cid])))
+          (is (= 1 (get-in wasm [:results :transaction-cid-0])))
+          (is (= 0 (get-in wasm [:results :replay-step-0])))
+          (is (= 0 (get-in wasm [:results :replay-step-1])))
+          (is (= 1 (get-in wasm [:results :check-replay-root]))
+              "final-root binding is accepted only after every replay step")
+          (is (= (:results wasm) (:results native)))))
       (finally (delete-tree! directory)))))
