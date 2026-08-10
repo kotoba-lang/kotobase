@@ -1,0 +1,24 @@
+(ns kotobase.cid-crypto-primitives
+  ;; Rust-free cryptographic host boundary. The guest supplies deterministic
+  ;; bytes as lowercase hex. The host owns the signing key and returns only
+  ;; public-key/signature material; no filesystem, network, clock, randomness,
+  ;; database, or storage authority crosses this capability.
+  (:export [main check-sha256 check-ed25519])
+  (:capabilities #{:hash/sha256 :identity/sign}))
+
+(defn check-sha256 [] :i64
+  (if (string=?
+       (typed-cap-call :hash/sha256 :string :string "hex:616263")
+       "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+    1 0))
+
+(defn check-ed25519 [] :i64
+  (if (string=?
+       (typed-cap-call :identity/sign :string :string "hex:616263")
+       (string-concat
+        "79b5562e8fe654f94078b112e8a98ba7901f853ae695bed7e0e3910bad049664:"
+        "71dcb65f01d32556134ca44d130715adb02210919a8a47e016773d742b421895ebf1df3d9bf447b857adec983f055855c9a4260ad9a1f96da4c82f50bec7ce01"))
+    1 0))
+
+(defn main [] :i64
+  (check-sha256))

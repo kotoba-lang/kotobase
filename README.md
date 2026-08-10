@@ -3,9 +3,13 @@
 [![CI](https://github.com/kotoba-lang/kotobase/actions/workflows/ci.yml/badge.svg)](https://github.com/kotoba-lang/kotobase/actions/workflows/ci.yml)
 
 The primary API is now `kotobase.core`: `open`, `transact!`, `datoms`, `q`,
-`query`, and `pull` over an injected `kotobase-storage` backend. PostgreSQL,
-S3/R2, and IPFS/IPNS are provider adapters at the immutable-block/mutable-ref
-boundary. See [`docs/storage-architecture.md`](docs/storage-architecture.md).
+`query`, and `pull`. The official `kotobase.net` / `kotoba-lang/kotobase`
+correctness path is a signed immutable CID commit DAG executed by Kotoba native
+and Wasm targets. It requires no mutable ref service and MUST NOT depend on
+Durable Objects, D1, PostgreSQL, or Rust. S3/R2 and IPFS are untrusted immutable
+block transports. The older injected `kotobase-storage` mutable-ref providers
+remain compatibility and migration surfaces only. See
+[`docs/storage-architecture.md`](docs/storage-architecture.md).
 
 The document/stream `kotobase.store/IStore` section below is a legacy
 compatibility surface; new database backends must not target it.
@@ -21,11 +25,12 @@ data.
 (ADR-2608039970). Two things sit underneath everything here, and neither is
 Datomic:
 
-- **content-addressed blocks + conditional refs + large objects** — facts are
+- **content-addressed blocks + optional compatibility refs + large objects** — facts are
   CIDv1 blocks (`ipld`/`multiformats`/`dag-cbor`), the index structure is a
   content-addressed Prolly Tree instead of a B-tree, history is an immutable
-  commit DAG rather than a single log. PostgreSQL, S3/R2, IPFS/IPNS and D1 are
-  provider adapters at that boundary — see
+  commit DAG rather than a single log. S3/R2 and IPFS are official immutable
+  transports; PostgreSQL, D1, and mutable IPNS/ref adapters are compatibility
+  surfaces and cannot select canonical truth — see
   [`docs/storage-architecture.md`](docs/storage-architecture.md). IPLD is the
   canonical encoding in every deployment.
 - **the datom (triple/EAV) itself**, immutable and content-addressed — the

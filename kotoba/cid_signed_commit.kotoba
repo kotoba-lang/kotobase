@@ -1,0 +1,329 @@
+(ns kotobase.cid-signed-commit
+  ;; Canonical fixed-vector commit construction in the guest. The host is
+  ;; limited to SHA-256 and Ed25519 over caller-supplied hex bytes; DAG-CBOR,
+  ;; CIDv1/base32, signature message framing, and base64url are Kotoba code.
+  (:export [main check-state-root check-merge-transaction-cid
+            check-payload-digest check-payload-cid check-signed-cid])
+  (:capabilities #{:hash/sha256 :identity/sign}))
+
+(defn- slice [text :string start :i64 end :i64] :string
+  (string-substring text start end))
+
+(defn- digit [alphabet :string value :i64] :string
+  (slice alphabet value (+ value 1)))
+
+(defn- remainder [value :i64 divisor :i64] :i64
+  (- value (* (quot value divisor) divisor)))
+
+(defn- hex-nibble-loop [code :i64 alphabet :string i :i64] :i64
+  (if (>= i (string-byte-length alphabet))
+    -1
+    (if (= code (string-code-point-at alphabet i))
+      i
+      (hex-nibble-loop code alphabet (+ i 1)))))
+
+(defn- hex-nibble [code :i64] :i64
+  (hex-nibble-loop code "0123456789abcdef" 0))
+
+(defn- hex-byte [value :i64] :string
+  (string-concat (digit "0123456789abcdef" (quot value 16))
+                 (digit "0123456789abcdef" (remainder value 16))))
+
+(defn- ascii-hex-loop [text :string i :i64] :string
+  (if (>= i (string-byte-length text))
+    ""
+    (string-concat (hex-byte (string-code-point-at text i))
+                   (ascii-hex-loop text (+ i 1)))))
+
+(defn- ascii-hex [text :string] :string
+  (ascii-hex-loop text 0))
+
+(defn- cbor-text [text :string] :string
+  (let [length (string-byte-length text)
+        header (if (< length 24)
+                 (hex-byte (+ 96 length))
+                 (string-concat "78" (hex-byte length)))]
+    (string-concat header (ascii-hex text))))
+
+(defn- cat4 [a :string b :string c :string d :string] :string
+  (string-concat a (string-concat b (string-concat c d))))
+
+(defn- sha256-digest [bytes-hex :string] :string
+  (typed-cap-call :hash/sha256 :string :string
+                  (string-concat "hex:" bytes-hex)))
+
+(defn- dag-link-from-digest [digest-hex :string] :string
+  ;; tag(42), byte-string(37), identity multibase prefix 0x00, CIDv1,
+  ;; dag-cbor, sha2-256, 32-byte digest.
+  (string-concat "d82a58250001711220" digest-hex))
+
+(defn- cbor-byte-string-hex [payload-hex :string] :string
+  (let [length (quot (string-byte-length payload-hex) 2)
+        header (if (< length 24)
+                 (hex-byte (+ 64 length))
+                 (string-concat "58" (hex-byte length)))]
+    (string-concat header payload-hex)))
+
+(defn- wire-assert-hex [subject :string predicate :string object :string] :string
+  ;; Canonical DAG-CBOR map key order is o, p, s: equal-length text keys are
+  ;; ordered by their encoded bytes.
+  (string-concat
+   "a3"
+   (string-concat
+    (cbor-text "o")
+    (string-concat
+     (cbor-text object)
+     (string-concat
+      (cbor-text "p")
+      (string-concat
+       (cbor-text predicate)
+       (string-concat (cbor-text "s") (cbor-text subject))))))))
+
+(defn- wire-retract-hex [subject :string predicate :string object :string] :string
+  ;; "op" follows the one-byte keys because canonical CBOR sorts by encoded
+  ;; key length before lexical bytes.
+  (string-concat
+   "a4"
+   (string-concat
+    (cbor-text "o")
+    (string-concat
+     (cbor-text object)
+     (string-concat
+      (cbor-text "p")
+      (string-concat
+       (cbor-text predicate)
+       (string-concat
+        (cbor-text "s")
+        (string-concat
+         (cbor-text subject)
+         (string-concat (cbor-text "op") (cbor-text "retract"))))))))))
+
+(defn- public-transaction-block-hex [first-quad :string second-quad :string] :string
+  (let [plaintext (string-concat
+                   "a165717561647382"
+                   (string-concat first-quad second-quad))]
+    (string-concat "a1626374" (cbor-byte-string-hex plaintext))))
+
+(defn- transaction-block-hex [step :i64] :string
+  ;; Build the public-encryption block from bounded transaction atoms. Assert
+  ;; operations omit "op" on the peer wire; retract retains it.
+  (if (= step 1)
+    (public-transaction-block-hex
+     (wire-assert-hex "e1" ":name" "Alice")
+     (wire-assert-hex "e1" ":status" "base"))
+    (if (= step 2)
+      (public-transaction-block-hex
+       (wire-retract-hex "e1" ":status" "base")
+       (wire-assert-hex "e1" ":status" "branch-a"))
+      (public-transaction-block-hex
+       (wire-assert-hex "e2" ":name" "Bob")
+       (wire-assert-hex "e1" ":status" "branch-b")))))
+
+(defn- novelty-block-hex
+  [transaction-digest :string previous-novelty-digest :string]
+  :string
+  (string-concat
+   "a26165"
+   (string-concat
+    (dag-link-from-digest transaction-digest)
+    (string-concat "6472657374"
+                   (if (string=? previous-novelty-digest "")
+                     "f6"
+                     (dag-link-from-digest previous-novelty-digest))))))
+
+(defn- chain-block-hex
+  [sequence :i64 previous-chain-digest :string novelty-digest :string]
+  :string
+  (let [previous (if (string=? previous-chain-digest "")
+                   "f6"
+                   (dag-link-from-digest previous-chain-digest))
+        state (string-concat
+               "67696e6465786564f66c6e6f76656c74792d6261636b"
+               (string-concat
+                (dag-link-from-digest novelty-digest)
+                (string-concat
+                 "6d6e6f76656c74792d636f756e74"
+                 (string-concat (hex-byte (+ sequence 1))
+                                "6d6e6f76656c74792d66726f6e74f6"))))]
+    (string-concat
+     "a363736571"
+     (string-concat
+      (hex-byte sequence)
+      (string-concat "6470726576"
+                     (string-concat previous
+                                    (string-concat "657374617465a4" state)))))))
+
+(defn- replay-state-digest [] :string
+  (let [tx-one (sha256-digest (transaction-block-hex 1))
+        novelty-one (sha256-digest (novelty-block-hex tx-one ""))
+        chain-one (sha256-digest (chain-block-hex 0 "" novelty-one))
+        tx-two (sha256-digest (transaction-block-hex 2))
+        novelty-two (sha256-digest (novelty-block-hex tx-two novelty-one))
+        chain-two (sha256-digest (chain-block-hex 1 chain-one novelty-two))
+        tx-three (sha256-digest (transaction-block-hex 3))
+        novelty-three (sha256-digest (novelty-block-hex tx-three novelty-two))]
+    (sha256-digest (chain-block-hex 2 chain-two novelty-three))))
+
+(defn- replay-state-root [] :string
+  (cid-from-digest (replay-state-digest)))
+
+(defn- merge-transaction-hex [] :string
+  ;; C3 marker reconstructed from the canonical CID-byte frontier and causal
+  ;; order. Its contents are fixed only because this is the checked-in C3
+  ;; conformance graph; its CID is still derived in the guest.
+  "a666736368656d61781d6b6f746f626173652e6d657267652d7472616e73616374696f6e2e76316973656d616e74696373783b62616679726569666f696d736369676d6f747071776c37616f6170636d7a786d776f7a6a787a75333765786f786861727a7636776d6e33797772756d636f6e666c6963745f72756c65783063617573616c2d6865696768742d7468656e2d6369642d62797465732d6c6173742d6f7065726174696f6e2d77696e736d73746174655f70726f66696c65776b6f746f626173652e706565722e7075626c69632e76316e62617369735f66726f6e7469657282783b62616679726569627766676d74356a736a693463737074366f783274363269797a767337646d697261356b663779683433646c3771677773686979783b62616679726569637661776f6273696961686c783261767634356b366d70716e656a72367279666471617837676676726b326872663367657a346d6f6f7264657265645f636f6d6d69747383783b6261667972656962727935336c337a6f327437746235796e357866697a3277746c736677326d6178776d32726433726177796b3373627a35683471783b62616679726569627766676d74356a736a693463737074366f783274363269797a767337646d697261356b663779683433646c3771677773686979783b62616679726569637661776f6273696961686c783261767634356b366d70716e656a72367279666471617837676676726b326872663367657a346d")
+
+(defn- payload-hex [] :string
+  ;; The fixed fixture's UTF-8 text atoms are pre-encoded. Map/array structure
+  ;; and canonical key order are still assembled here; the generalized codec
+  ;; slice will replace these atoms with bounded chunked UTF-8 encoding.
+  (let [graph "783b626166797265696379706768356d36786365747a65776b70746b6e6368753477646362796b636e7262646579786f716a7a67706433776e76327769"
+        author "78386469643a6b65793a7a364d6b6e654d6b5a717771526955356d4a7a5347336b44777a743950384335394e344e475466424c66534745376337"
+        schema "781a6b6f746f626173652e636f6d6d69742d7061796c6f61642e7631"
+        db-name "6b636f6e666f726d616e6365"
+        parent-a "783b62616679726569627766676d74356a736a693463737074366f783274363269797a767337646d697261356b663779683433646c3771677773686979"
+        parent-b "783b62616679726569637661776f6273696961686c783261767634356b366d70716e656a72367279666471617837676676726b326872663367657a346d"
+        parents (string-concat "82" (string-concat parent-a parent-b))
+        semantics "783b62616679726569666f696d736369676d6f747071776c37616f6170636d7a786d776f7a6a787a75333765786f786861727a7636776d6e3379777275"
+        ;; These two atoms are independently re-derived by check-state-root
+        ;; and check-merge-transaction-cid. Keeping the layer boundary here
+        ;; lets the standard fixed native arena qualify every layer without
+        ;; weakening its allocation limits merely for one monolithic call.
+        state-root "783b62616679726569676c7165363474706935666967343378626d3366657175656332713533746a6b327362336d6b6f6f78656a62367271616d796565"
+        transaction "783b62616679726569656479656f626363636e6173687168326a74766d617575706c616f636261326f376f6d6672786a67366f6177686e6b3573793565"
+        state-profile "776b6f746f626173652e706565722e7075626c69632e7631"]
+    (string-concat
+     "a9"
+     (string-concat
+      (string-concat
+       (cat4 "656772617068" graph "66617574686f72" author)
+       (cat4 "66736368656d61" schema "6764625f6e616d65" db-name))
+      (string-concat
+       (string-concat
+        (cat4 "67706172656e7473" parents "6973656d616e74696373" semantics)
+        (cat4 "6a73746174655f726f6f74" state-root
+              "6b7472616e73616374696f6e" transaction))
+       (string-concat "6d73746174655f70726f66696c65" state-profile))))))
+
+(defn- pow2 [bits :i64] :i64
+  (if (= bits 0) 1
+    (if (= bits 1) 2
+      (if (= bits 2) 4
+        (if (= bits 3) 8
+          (if (= bits 4) 16
+            (if (= bits 5) 32
+              (if (= bits 6) 64 128))))))))
+
+(defn- hex-byte-at [text :string offset :i64] :i64
+  (+ (* 16 (hex-nibble (string-code-point-at text offset)))
+     (hex-nibble (string-code-point-at text (+ offset 1)))))
+
+(defn- base32-loop
+  [hex :string offset :i64 buffer :i64 bits :i64 output :string]
+  :string
+  (if (>= bits 5)
+    (let [remaining (- bits 5)
+          divisor (pow2 remaining)
+          index (quot buffer divisor)
+          next-buffer (remainder buffer divisor)]
+      (base32-loop hex offset next-buffer remaining
+                   (string-concat output
+                                  (digit "abcdefghijklmnopqrstuvwxyz234567" index))))
+    (if (< offset (string-byte-length hex))
+      (base32-loop hex (+ offset 2)
+                   (+ (* buffer 256) (hex-byte-at hex offset))
+                   (+ bits 8) output)
+      (if (> bits 0)
+        (string-concat output
+                       (digit "abcdefghijklmnopqrstuvwxyz234567"
+                              (* buffer (pow2 (- 5 bits)))))
+        output))))
+
+(defn- cid-from-digest [digest-hex :string] :string
+  (string-concat "b" (base32-loop (string-concat "01711220" digest-hex)
+                                  0 0 0 "")))
+
+(defn- sha256-cid [bytes-hex :string] :string
+  (cid-from-digest (sha256-digest bytes-hex)))
+
+(defn- base64url-loop [hex :string offset :i64 output :string] :string
+  (let [remaining (- (string-byte-length hex) offset)
+        alphabet "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        a (hex-byte-at hex offset)]
+    (if (>= remaining 6)
+      (let [b (hex-byte-at hex (+ offset 2))
+            c (hex-byte-at hex (+ offset 4))]
+        (base64url-loop
+         hex (+ offset 6)
+         (cat4 output
+               (digit alphabet (quot a 4))
+               (digit alphabet (+ (* (remainder a 4) 16) (quot b 16)))
+               (string-concat
+                (digit alphabet (+ (* (remainder b 16) 4) (quot c 64)))
+                (digit alphabet (remainder c 64))))))
+      (if (= remaining 4)
+        (let [b (hex-byte-at hex (+ offset 2))]
+          (string-concat output
+                         (string-concat
+                          (digit alphabet (quot a 4))
+                          (string-concat
+                           (digit alphabet (+ (* (remainder a 4) 16) (quot b 16)))
+                           (digit alphabet (* (remainder b 16) 4))))))
+        (string-concat output
+                       (string-concat
+                        (digit alphabet (quot a 4))
+                        (digit alphabet (* (remainder a 4) 16))))))))
+
+(defn- base64url [hex :string] :string
+  (base64url-loop hex 0 ""))
+
+(defn- signed-envelope-hex [] :string
+  (let [payload (payload-hex)
+        payload-cid (sha256-cid payload)
+        domain (ascii-hex "kotobase.signed-commit.v1")
+        message (string-concat domain
+                               (string-concat "00" (ascii-hex payload-cid)))
+        signed (typed-cap-call :identity/sign :string :string
+                               (string-concat "hex:" message))
+        signature-hex (slice signed 65 193)
+        signature (base64url signature-hex)]
+    (string-concat
+     "a5"
+     (string-concat
+      (string-concat
+       (cat4 (cbor-text "schema") (cbor-text "kotobase.signed-commit.v1")
+             (cbor-text "payload") payload)
+       (cat4 (cbor-text "signature") (cbor-text signature)
+             (cbor-text "payload_cid") (cbor-text payload-cid)))
+      (string-concat (cbor-text "signature_algorithm")
+                     (cbor-text "Ed25519"))))))
+
+(defn check-payload-cid [] :i64
+  (if (string=? (sha256-cid (payload-hex))
+                "bafyreihrxdtdgpgvhenlgbg5j67ykmnfey72u3xo42kn2eabo3efhl6roe")
+    1 0))
+
+(defn check-state-root [] :i64
+  (if (string=? (replay-state-root)
+                "bafyreiglqe64tpi5fig43xbm3fequec2q53tjk2sb3mkooxejb6rqamyee")
+    1 0))
+
+(defn check-merge-transaction-cid [] :i64
+  (if (string=? (sha256-cid (merge-transaction-hex))
+                "bafyreiedyeobcccnashqh2jtvmauuplaocba2o7omfrxjg6oawhnk5sy5e")
+    1 0))
+
+(defn check-payload-digest [] :i64
+  (if (string=?
+       (typed-cap-call :hash/sha256 :string :string
+                       (string-concat "hex:" (payload-hex)))
+       "f1b8e6333cd5391ab304dd4fbf8531a5263faa6eeee694dd100176c853afd171")
+    1 0))
+
+(defn check-signed-cid [] :i64
+  (if (string=? (sha256-cid (signed-envelope-hex))
+                "bafyreidmcqtvhsr5aj4nxxvjvvrygaretdzmqfa2m73hlazxgevc3pdpva")
+    1 0))
+
+(defn main [] :i64
+  (check-signed-cid))

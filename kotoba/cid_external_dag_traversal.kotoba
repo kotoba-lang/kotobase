@@ -1,0 +1,257 @@
+(ns kotobase.cid-external-dag-traversal
+  ;; The guest contains no commit-envelope fixture bytes. A bounded object
+  ;; capability supplies a frontier key and immutable blocks; Kotoba decodes
+  ;; the signed-envelope DAG-CBOR parents and owns traversal semantics.
+  (:export [main check-external-parent-decode check-external-closure
+            check-external-causal-height external-frontier-length
+            external-envelope-length external-parent-count
+            external-first-parent-length external-closure-0
+            external-closure-1 external-closure-2 external-closure-3
+            external-closure-4 external-closure-5 external-closure-6
+            external-closure-7])
+  (:capabilities #{:object/get-stream}))
+
+(defn- marker [] :string "67706172656e7473")
+
+(defn- marker-at-loop [source :string start :i64 index :i64] :i64
+  (if (= index 16)
+    1
+    (if (= (string-code-point-at source (+ start index))
+           (string-code-point-at (marker) index))
+      (marker-at-loop source start (+ index 1))
+      0)))
+
+(defn- find-marker [source :string index :i64] :i64
+  (if (> (+ index 16) (string-length source))
+    -1
+    (if (= (marker-at-loop source index 0) 1)
+      index
+      (find-marker source (+ index 2)))))
+
+(defn- hex-digit [value :i64] :i64
+  (if (and (>= value 48) (<= value 57))
+    (- value 48)
+    (if (and (>= value 97) (<= value 102))
+      (+ 10 (- value 97))
+      -1)))
+
+(defn- hex-byte [source :string offset :i64] :i64
+  (let [high (hex-digit (string-code-point-at source offset))
+        low (hex-digit (string-code-point-at source (+ offset 1)))]
+    (if (or (< high 0) (< low 0)) -1 (+ (* high 16) low))))
+
+(defn- parents-offset [source :string] :i64
+  (let [at (find-marker source 0)]
+    (if (< at 0) -1 (+ at 16))))
+
+(defn- parent-count [source :string] :i64
+  (let [offset (parents-offset source)]
+    (if (< offset 0)
+      -1
+      (let [head (hex-byte source offset)]
+        (if (and (>= head 128) (<= head 151)) (- head 128) -1)))))
+
+(defn- parent-at-loop
+  [source :string offset :i64 index :i64 target :i64]
+  :string
+  (if (= index target)
+    (let [head (hex-byte source offset)]
+      (if (and (>= head 120) (<= head 123))
+        (let [length-size (- head 119)
+              length (if (= length-size 1) (hex-byte source (+ offset 2)) -1)]
+          (if (< length 0)
+            ""
+            (string-substring source offset
+                              (+ offset (* 2 (+ 1 length-size length))))))
+        ""))
+    (let [head (hex-byte source offset)
+          length-size (if (and (>= head 120) (<= head 123)) (- head 119) -1)
+          length (if (= length-size 1) (hex-byte source (+ offset 2)) -1)]
+      (if (or (< length-size 0) (< length 0))
+        ""
+        (parent-at-loop source (+ offset (* 2 (+ 1 length-size length)))
+                        (+ index 1) target)))))
+
+(defn- parent-at [source :string target :i64] :string
+  (let [offset (parents-offset source)
+        count (parent-count source)]
+    (if (or (< offset 0) (< target 0))
+      ""
+      (if (>= target count)
+        ""
+        (parent-at-loop source (+ offset 2) 0 target)))))
+
+(defn- decimal-loop [text :string index :i64 value :i64] :i64
+  (if (= index (string-length text))
+    value
+    (let [digit (- (string-code-point-at text index) 48)]
+      (if (or (< digit 0) (> digit 9))
+        -1
+        (decimal-loop text (+ index 1) (+ (* value 10) digit))))))
+
+(defn- parent-count-at [source :string offset :i64] :i64
+  (let [head (hex-byte source offset)]
+    (if (and (>= head 128) (<= head 151)) (- head 128) -1)))
+
+(defn- hinted-parents-offset [key :string envelope :string] :i64
+  (let [hint (typed-cap-call :object/get-stream :string :string
+                             (string-concat "offset:" key))
+        offset (decimal-loop hint 0 0)]
+    (if (< offset 0)
+      -1
+      (if (= (marker-at-loop envelope offset 0) 1) (+ offset 16) -1))))
+
+(defn- parent-at-offset
+  [source :string offset :i64 count :i64 target :i64]
+  :string
+  (if (or (< offset 0) (< target 0))
+    ""
+    (if (>= target count)
+      ""
+      (parent-at-loop source (+ offset 2) 0 target))))
+
+(defn- fetch [key :string] :string
+  (typed-cap-call :object/get-stream :string :string key))
+
+(defn- node-key [node :i64] :string
+  (if (= node 0) (fetch "node0")
+    (if (= node 1) (fetch "node1")
+      (if (= node 2) (fetch "node2")
+        (if (= node 3) (fetch "node3")
+          (if (= node 4) (fetch "node4")
+            (if (= node 5) (fetch "node5")
+              (if (= node 6) (fetch "node6") (fetch "node7")))))))))
+
+(defn- node-from-key [key :string] :i64
+  (- (string-code-point-at (fetch (string-concat "index:" key)) 0) 48))
+
+(defn- fetch-envelope [key :string] :string
+  (fetch (string-concat "block:" key)))
+
+(defn- pow2 [index :i64] :i64
+  (if (= index 0) 1
+    (if (= index 1) 2
+      (if (= index 2) 4
+        (if (= index 3) 8
+          (if (= index 4) 16
+            (if (= index 5) 32
+              (if (= index 6) 64 128))))))))
+
+(defn- remainder [value :i64 divisor :i64] :i64
+  (- value (* (quot value divisor) divisor)))
+
+(defn- has-bit [mask :i64 index :i64] :i64
+  (remainder (quot mask (pow2 index)) 2))
+
+(defn- mask-union-loop
+  [left :i64 right :i64 index :i64 total :i64]
+  :i64
+  (if (= index 8)
+    total
+    (mask-union-loop left right (+ index 1)
+                     (+ total (if (= (+ (has-bit left index)
+                                         (has-bit right index)) 0)
+                                0 (pow2 index))))))
+
+(defn- mask-difference-loop
+  [left :i64 right :i64 index :i64 total :i64]
+  :i64
+  (if (= index 8)
+    total
+    (mask-difference-loop
+     left right (+ index 1)
+     (+ total (if (= (* (has-bit left index)
+                         (- 1 (has-bit right index))) 1)
+                (pow2 index) 0)))))
+
+(defn- direct-parent-mask-loop
+  [envelope :string offset :i64 index :i64 count :i64 mask :i64]
+  :i64
+  (if (= index count)
+    mask
+    (let [parent-node (node-from-key
+                       (parent-at-offset envelope offset count index))]
+      (if (< parent-node 0)
+        -1
+        (direct-parent-mask-loop envelope offset (+ index 1) count
+                                 (mask-union-loop mask (pow2 parent-node) 0 0))))))
+
+(defn- direct-parent-mask [node :i64] :i64
+  (let [key (node-key node)
+        envelope (fetch-envelope key)
+        offset (hinted-parents-offset key envelope)
+        count (if (< offset 0) -1 (parent-count-at envelope offset))]
+    (if (< count 0) -1
+      (direct-parent-mask-loop envelope offset 0 count 0))))
+
+(defn- expand-mask-loop
+  [mask :i64 node :i64 expanded :i64]
+  :i64
+  (if (= node 8)
+    expanded
+    (if (= (has-bit mask node) 0)
+      (expand-mask-loop mask (+ node 1) expanded)
+      (let [parents (direct-parent-mask node)]
+        (if (< parents 0) -1
+          (expand-mask-loop mask (+ node 1)
+                            (mask-union-loop expanded parents 0 0)))))))
+
+(defn- closure-rounds
+  [seen :i64 frontier-mask :i64 round :i64]
+  :i64
+  (if (= round 8)
+    seen
+    (let [parents (expand-mask-loop frontier-mask 0 0)]
+      (if (< parents 0) -1
+        (let [new-nodes (mask-difference-loop parents seen 0 0)]
+          (if (= new-nodes 0)
+            seen
+            (closure-rounds (mask-union-loop seen new-nodes 0 0)
+                            new-nodes (+ round 1))))))))
+
+(defn- closure [node :i64] :i64
+  (closure-rounds (pow2 node) (pow2 node) 0))
+
+(defn- height-frontiers [frontier-mask :i64 depth :i64 round :i64] :i64
+  (if (= frontier-mask 0)
+    depth
+    (if (= round 8)
+      -1
+      (let [parents (expand-mask-loop frontier-mask 0 0)]
+        (if (< parents 0) -1
+          (height-frontiers parents (+ depth 1) (+ round 1)))))))
+
+(defn- height [node :i64] :i64
+  (height-frontiers (pow2 node) -1 0))
+
+(defn- frontier [] :string (fetch "frontier"))
+
+(defn external-frontier-length [] :i64 (string-length (frontier)))
+(defn external-envelope-length [] :i64 (string-length (fetch-envelope (frontier))))
+(defn external-parent-count [] :i64 (parent-count (fetch-envelope (frontier))))
+(defn external-first-parent-length [] :i64
+  (string-length (parent-at (fetch-envelope (frontier)) 0)))
+
+(defn check-external-parent-decode [] :i64
+  (if (= (parent-count (fetch-envelope (frontier))) 2) 1 0))
+
+(defn external-closure-0 [] :i64 (closure 0))
+(defn external-closure-1 [] :i64 (closure 1))
+(defn external-closure-2 [] :i64 (closure 2))
+(defn external-closure-3 [] :i64 (closure 3))
+(defn external-closure-4 [] :i64 (closure 4))
+(defn external-closure-5 [] :i64 (closure 5))
+(defn external-closure-6 [] :i64 (closure 6))
+(defn external-closure-7 [] :i64 (closure 7))
+
+(defn check-external-closure [] :i64
+  (let [root-node (node-from-key (frontier))]
+    (if (< root-node 0) 0
+      (if (= (closure root-node) 255) 1 0))))
+
+(defn check-external-causal-height [] :i64
+  (let [root-node (node-from-key (frontier))]
+    (if (< root-node 0) 0
+      (if (= (height root-node) 4) 1 0))))
+
+(defn main [] :i64 (check-external-closure))

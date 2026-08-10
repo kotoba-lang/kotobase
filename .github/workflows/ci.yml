@@ -47,6 +47,9 @@ jobs:
       - name: Run tests
         run: clojure -M:test
 
+      - name: Rust-free Kotoba native/Wasm graph semantics qualification
+        run: clojure -M:cid-conformance
+
       - name: Compile and run Promise IStore CLJS test
         run: |
           clojure -M:cljs-test -m cljs.main -co '{:target :nodejs :output-to "target/async-node.js" :optimizations :none}' -c kotobase.code-graph-async-node

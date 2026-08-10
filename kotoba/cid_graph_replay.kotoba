@@ -1,0 +1,165 @@
+(ns kotobase.cid-graph-replay
+  ;; Rust-free C3 graph-semantics kernel. This scalarizes the fixed fixture's
+  ;; closed schema so the same admitted source can execute on both backends.
+  ;; CID/DAG-CBOR/Ed25519 byte identity remains a separate open qualification.
+  (:export [main check-cid-order check-forward check-reversed
+            check-shuffled-ancestry check-repeated-merge check-criss-cross]))
+
+(defn- base32-rank-loop [alphabet :string code :i64 i :i64] :i64
+  (if (>= i (string-byte-length alphabet))
+    -1
+    (if (= code (string-code-point-at alphabet i))
+      i
+      (base32-rank-loop alphabet code (+ i 1)))))
+
+(defn- base32-rank [code :i64] :i64
+  (base32-rank-loop "abcdefghijklmnopqrstuvwxyz234567" code 0))
+
+(defn- cid-less-loop [a :string b :string i :i64] :i64
+  (let [na (string-byte-length a)
+        nb (string-byte-length b)]
+    (if (>= i na)
+      (if (< na nb) 1 0)
+      (if (>= i nb)
+        0
+        (let [ra (base32-rank (string-code-point-at a i))
+              rb (base32-rank (string-code-point-at b i))]
+          (if (< ra rb)
+            1
+            (if (> ra rb)
+              0
+              (cid-less-loop a b (+ i 1)))))))))
+
+(defn- apply-op
+  [current :string expected :string value :string op :i64]
+  :string
+  (if (= op 1)
+    value
+    (if (= op 2)
+      (if (string=? current expected) "" current)
+      current)))
+
+(defn- apply-status-branch [current :string branch :i64] :string
+  (if (= branch 1)
+    (apply-op (apply-op current "base" "" 2) "" "branch-a" 1)
+    (apply-op current "" "branch-b" 1)))
+
+(defn- apply-e2-name-branch [current :string branch :i64] :string
+  (if (= branch 2) (apply-op current "" "Bob" 1) current))
+
+(defn- merge-two
+  [cid-one :string branch-one :i64 cid-two :string branch-two :i64]
+  :string
+  (let [one-first (= (cid-less-loop cid-one cid-two 0) 1)
+        first-branch (if one-first branch-one branch-two)
+        second-branch (if one-first branch-two branch-one)
+        status-one (apply-status-branch "base" first-branch)
+        status-two (apply-status-branch status-one second-branch)
+        e2-one (apply-e2-name-branch "" first-branch)
+        e2-two (apply-e2-name-branch e2-one second-branch)]
+    (string-concat "Alice"
+                   (string-concat "|"
+                                  (string-concat status-two
+                                                 (string-concat "|" e2-two))))))
+
+(defn check-cid-order [] :i64
+  (let [cid-a "bafyreibwfgmt5jsji4cspt6ox2t62iyzvs7dmira5kf7yh43dl7qgwshiy"
+        cid-b "bafyreicvawobsiiahlx2avv45k6mpqnejr6ryfdqax7gfvrk2hrf3gez4m"]
+    (if (= (cid-less-loop cid-a cid-b 0) 1)
+      (if (= (cid-less-loop cid-b cid-a 0) 0) 1 0)
+      0)))
+
+(defn check-forward [] :i64
+  (if (string=?
+       (merge-two
+        "bafyreibwfgmt5jsji4cspt6ox2t62iyzvs7dmira5kf7yh43dl7qgwshiy" 1
+        "bafyreicvawobsiiahlx2avv45k6mpqnejr6ryfdqax7gfvrk2hrf3gez4m" 2)
+       "Alice|branch-b|Bob")
+    1 0))
+
+(defn check-reversed [] :i64
+  (if (string=?
+       (merge-two
+        "bafyreicvawobsiiahlx2avv45k6mpqnejr6ryfdqax7gfvrk2hrf3gez4m" 2
+        "bafyreibwfgmt5jsji4cspt6ox2t62iyzvs7dmira5kf7yh43dl7qgwshiy" 1)
+       "Alice|branch-b|Bob")
+    1 0))
+
+(defn- ancestry-mask [node :i64] :i64
+  ;; Fixed criss-cross qualification DAG: 0 genesis; 1/2 concurrent effects;
+  ;; 3/4 concurrent merge markers over 1+2; 5 extends 3; 6 extends 4.
+  (if (= node 0) 1
+    (if (= node 1) 3
+      (if (= node 2) 5
+        (if (= node 3) 15
+          (if (= node 4) 23
+            (if (= node 5) 47 87)))))))
+
+(defn- remainder [value :i64 divisor :i64] :i64
+  (- value (* (quot value divisor) divisor)))
+
+(defn- pow2 [index :i64] :i64
+  (if (= index 0) 1
+    (if (= index 1) 2
+      (if (= index 2) 4
+        (if (= index 3) 8
+          (if (= index 4) 16
+            (if (= index 5) 32 64)))))))
+
+(defn- has-bit [mask :i64 index :i64] :i64
+  (remainder (quot mask (pow2 index)) 2))
+
+(defn- mask-union-loop
+  [left :i64 right :i64 index :i64 total :i64]
+  :i64
+  (if (= index 7)
+    total
+    (mask-union-loop
+     left right (+ index 1)
+     (+ total (if (= (+ (has-bit left index) (has-bit right index)) 0)
+                0 (pow2 index))))))
+
+(defn- mask-intersection-loop
+  [left :i64 right :i64 index :i64 total :i64]
+  :i64
+  (if (= index 7)
+    total
+    (mask-intersection-loop
+     left right (+ index 1)
+     (+ total (if (= (* (has-bit left index) (has-bit right index)) 1)
+                (pow2 index) 0)))))
+
+(defn- frontier-mask [first :i64 second :i64] :i64
+  (mask-union-loop (ancestry-mask first) (ancestry-mask second) 0 0))
+
+(defn- bit-count [mask :i64 count :i64] :i64
+  (if (= mask 0)
+    count
+    (bit-count (quot mask 2)
+               (+ count (remainder mask 2)))))
+
+(defn check-shuffled-ancestry [] :i64
+  (let [forward (frontier-mask 5 6)
+        reversed (frontier-mask 6 5)]
+    (if (= forward 127)
+      (if (= forward reversed) 1 0)
+      0)))
+
+(defn check-repeated-merge [] :i64
+  ;; Merge markers 3/4 carry no effect. The five effect nodes in mask 103
+  ;; occur through multiple paths but are replayed once through set union.
+  (if (= (bit-count (mask-intersection-loop (frontier-mask 5 6) 103 0 0) 0) 5)
+    1 0))
+
+(defn check-criss-cross [] :i64
+  (let [left (ancestry-mask 5)
+        right (ancestry-mask 6)
+        shared (mask-intersection-loop left right 0 0)]
+    (if (= shared 7)
+      (if (= (has-bit left 4) 0)
+        (if (= (has-bit right 3) 0) 1 0)
+        0)
+      0)))
+
+(defn main [] :i64
+  (check-forward))

@@ -35,6 +35,16 @@
                              io.github.cognitect-labs/test-runner
                              {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
                 :main-opts ["-m" "cognitect.test-runner" "-d" "test-integration"]}
+  :cid-conformance
+  {:replace-paths ["qualification"]
+   :replace-deps
+   {org.clojure/clojure {:mvn/version "1.12.0"}
+    io.github.kotoba-lang/compiler
+    {:git/url "https://github.com/kotoba-lang/compiler.git"
+     :git/sha "875e3882dd76508d1a9a51f7f5ac0f1e563e490d"}
+    io.github.cognitect-labs/test-runner
+    {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
+   :main-opts ["-m" "cognitect.test-runner" "-d" "qualification"]}
        ;; clj-kondo as a Clojars lib (no Homebrew/system install needed).
        :lint {:replace-deps {clj-kondo/clj-kondo {:mvn/version "2024.11.14"}}
          :main-opts ["-m" "clj-kondo.main" "--lint" "src" "test"
