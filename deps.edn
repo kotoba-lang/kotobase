@@ -10,7 +10,7 @@
  :deps {io.github.kotoba-lang/security {:git/url "https://github.com/kotoba-lang/security.git"
                                         :git/sha "b4ff9d8a56263030bc92539b101e1eeb2dbfce39"}
         io.github.kotoba-lang/abi {:git/url "https://github.com/kotoba-lang/abi.git"
-                                   :git/sha "57ecc60694bc6bd3dd799db02a092f14fc10cd3e"}
+                                   :git/sha "32ee84b2efc92478c846629c8d8319280eed506c"}
         ;; kotobase.core delegates to the engine, which speaks the
         ;; provider-neutral storage contract. Concrete providers (postgres, d1,
         ;; s3, ipfs, sqlite) are chosen by the host and passed in as `:storage`;
