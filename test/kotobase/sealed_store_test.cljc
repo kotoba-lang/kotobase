@@ -12,12 +12,15 @@
    :sealed/ciphertext [:encrypted (hash plaintext)]
    :sealed/ciphertext-digest (str "digest:" (hash plaintext))})
 
+(defn- always-active-lookup [_] :active)
+
 (def options
   {:seal-fn good-seal
    :unseal-fn (fn [sealed]
                 (get-in sealed [:sealed/private :plaintext]))
    :ciphertext-digest-fn
-   (fn [[tag digest]] (when (= :encrypted tag) (str "digest:" digest)))})
+   (fn [[tag digest]] (when (= :encrypted tag) (str "digest:" digest)))
+   :key-state-lookup always-active-lookup})
 
 (defn roundtrip-seal [plaintext]
   (assoc (good-seal plaintext) :sealed/private {:plaintext plaintext}))
@@ -163,3 +166,137 @@
            :request-bounds :approval :hardware-signing :remote-telemetry
            :recovery-readiness}
          (set (kb/production-profile-violations {})))))
+
+(deftest sealed-store-key-state-seal-allows-active-and-decrypt-only
+  (let [key-state (atom :active)
+        key-lookup (fn [kid] @key-state)
+        base-options {:seal-fn (fn [p]
+                                 {:envelope/algorithms [:x25519 :ml-kem-768 :aes-256-gcm]
+                                  :envelope/provider {:provider/id :host-crypto
+                                                       :provider/fips-validated false}
+                                  :envelope/epoch 2 :envelope/kem? true :envelope/hybrid? true
+                                  :sealed/ciphertext [:encrypted (hash p)]
+                                  :sealed/ciphertext-digest (str "digest:" (hash p))})
+                     :unseal-fn (fn [_] {:plaintext "data"})
+                     :ciphertext-digest-fn (fn [[tag digest]]
+                                             (when (= :encrypted tag) (str "digest:" digest)))
+                     :key-state-lookup key-lookup
+                     :crypto-policy {:kotoba.security/crypto-policy-version 1
+                                     :mode :hybrid-required :hybrid-epoch-floor 1}}
+        plaintext {:__key-id 2 :secret "data"}]
+    (reset! key-state :active)
+    (let [result (sealed/evaluate-seal base-options plaintext)]
+      (is (:sealed/allowed? result))
+      (is (not (contains? (set (:sealed/violations result)) :key-state-invalid-for-seal))))
+
+    (reset! key-state :decrypt-or-verify-only)
+    (let [result (sealed/evaluate-seal base-options plaintext)]
+      (is (:sealed/allowed? result)))))
+
+(deftest sealed-store-key-state-seal-denies-revoked-preactive-destroyed-unknown
+  (let [key-state (atom :active)
+        key-lookup (fn [kid] @key-state)
+        base-options {:seal-fn (fn [p]
+                                 {:envelope/algorithms [:x25519 :ml-kem-768 :aes-256-gcm]
+                                  :envelope/provider {:provider/id :host-crypto
+                                                       :provider/fips-validated false}
+                                  :envelope/epoch 2 :envelope/kem? true :envelope/hybrid? true
+                                  :sealed/ciphertext [:encrypted (hash p)]
+                                  :sealed/ciphertext-digest (str "digest:" (hash p))})
+                     :unseal-fn (fn [_] {:plaintext "data"})
+                     :ciphertext-digest-fn (fn [[tag digest]]
+                                             (when (= :encrypted tag) (str "digest:" digest)))
+                     :key-state-lookup key-lookup
+                     :crypto-policy {:kotoba.security/crypto-policy-version 1
+                                     :mode :hybrid-required :hybrid-epoch-floor 1}}
+        plaintext {:__key-id 2 :secret "data"}]
+    (doseq [bad-state [:revoked :preactive :destroyed :unknown-state]]
+      (reset! key-state bad-state)
+      (let [result (sealed/evaluate-seal base-options plaintext)]
+        (is (not (:sealed/allowed? result)) (str "denied for " bad-state))
+        (is (contains? (set (:sealed/violations result)) :key-state-invalid-for-seal)
+            (str "violation for " bad-state))))))
+
+(deftest sealed-store-key-state-unseal-allows-active-decrypt-revoked
+  (let [key-state (atom :active)
+        key-lookup (fn [kid] @key-state)
+        base-options {:seal-fn (fn [p]
+                                 {:envelope/algorithms [:x25519 :ml-kem-768 :aes-256-gcm]
+                                  :envelope/provider {:provider/id :host-crypto
+                                                       :provider/fips-validated false}
+                                  :envelope/epoch 2 :envelope/kem? true :envelope/hybrid? true
+                                  :sealed/ciphertext [:encrypted (hash p)]
+                                  :sealed/ciphertext-digest (str "digest:" (hash p))})
+                     :unseal-fn (fn [_] {:plaintext "data"})
+                     :ciphertext-digest-fn (fn [[tag digest]]
+                                             (when (= :encrypted tag) (str "digest:" digest)))
+                     :key-state-lookup key-lookup
+                     :crypto-policy {:kotoba.security/crypto-policy-version 1
+                                     :mode :hybrid-required :hybrid-epoch-floor 1}}
+        sealed-envelope {:envelope/algorithms [:x25519 :ml-kem-768 :aes-256-gcm]
+                         :envelope/provider {:provider/id :host-crypto
+                                              :provider/fips-validated false}
+                         :envelope/epoch 2 :envelope/kem? true :envelope/hybrid? true
+                         :sealed/ciphertext [:encrypted 123]
+                         :sealed/ciphertext-digest "digest:123"}]
+    (doseq [good-state [:active :decrypt-or-verify-only :revoked]]
+      (reset! key-state good-state)
+      (let [result (sealed/evaluate-open base-options sealed-envelope)]
+        (is (:sealed/allowed? result) (str "allowed for " good-state))
+        (is (not (contains? (set (:sealed/violations result)) :key-state-invalid-for-unseal))
+            (str "no violation for " good-state))))))
+
+(deftest sealed-store-key-state-unseal-denies-preactive-destroyed-unknown
+  (let [key-state (atom :active)
+        key-lookup (fn [kid] @key-state)
+        base-options {:seal-fn (fn [p]
+                                 {:envelope/algorithms [:x25519 :ml-kem-768 :aes-256-gcm]
+                                  :envelope/provider {:provider/id :host-crypto
+                                                       :provider/fips-validated false}
+                                  :envelope/epoch 2 :envelope/kem? true :envelope/hybrid? true
+                                  :sealed/ciphertext [:encrypted (hash p)]
+                                  :sealed/ciphertext-digest (str "digest:" (hash p))})
+                     :unseal-fn (fn [_] {:plaintext "data"})
+                     :ciphertext-digest-fn (fn [[tag digest]]
+                                             (when (= :encrypted tag) (str "digest:" digest)))
+                     :key-state-lookup key-lookup
+                     :crypto-policy {:kotoba.security/crypto-policy-version 1
+                                     :mode :hybrid-required :hybrid-epoch-floor 1}}
+        sealed-envelope {:envelope/algorithms [:x25519 :ml-kem-768 :aes-256-gcm]
+                         :envelope/provider {:provider/id :host-crypto
+                                              :provider/fips-validated false}
+                         :envelope/epoch 2 :envelope/kem? true :envelope/hybrid? true
+                         :sealed/ciphertext [:encrypted 123]
+                         :sealed/ciphertext-digest "digest:123"}]
+    (doseq [bad-state [:preactive :destroyed :unknown-state]]
+      (reset! key-state bad-state)
+      (let [result (sealed/evaluate-open base-options sealed-envelope)]
+        (is (not (:sealed/allowed? result)) (str "denied for " bad-state))
+        (is (contains? (set (:sealed/violations result)) :key-state-invalid-for-unseal)
+            (str "violation for " bad-state))))))
+
+(deftest sealed-store-key-state-toctou-seal-active-then-destroyed-open-fails
+  (let [key-state (atom :active)
+        key-lookup (fn [kid] @key-state)
+        base-options {:seal-fn (fn [p]
+                                 {:envelope/algorithms [:x25519 :ml-kem-768 :aes-256-gcm]
+                                  :envelope/provider {:provider/id :host-crypto
+                                                       :provider/fips-validated false}
+                                  :envelope/epoch 2 :envelope/kem? true :envelope/hybrid? true
+                                  :sealed/ciphertext [:encrypted (hash p)]
+                                  :sealed/ciphertext-digest (str "digest:" (hash p))})
+                     :unseal-fn (fn [_] {:plaintext "data"})
+                     :ciphertext-digest-fn (fn [[tag digest]]
+                                             (when (= :encrypted tag) (str "digest:" digest)))
+                     :key-state-lookup key-lookup
+                     :crypto-policy {:kotoba.security/crypto-policy-version 1
+                                     :mode :hybrid-required :hybrid-epoch-floor 1}}
+        plaintext {:__key-id 2 :secret "data"}]
+    (reset! key-state :active)
+    (let [seal-result (sealed/evaluate-seal base-options plaintext)]
+      (is (:sealed/allowed? seal-result))
+      ;; Now key is destroyed - TOCTOU scenario
+      (reset! key-state :destroyed)
+      (let [open-result (sealed/evaluate-open base-options (:sealed/value seal-result))]
+        (is (not (:sealed/allowed? open-result)))
+        (is (contains? (set (:sealed/violations open-result)) :key-state-invalid-for-unseal))))))
