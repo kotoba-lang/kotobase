@@ -39,6 +39,14 @@
             (class*/schema-errors
              (assoc schema :mail/attachment {:class :restricted})))))
 
+(deftest inline-sensitive-value-makes-schema-unclassified
+  ;; an inline sensitive value is a hard schema error, not a warning
+  (is (not (class*/classified?
+        (assoc-in schema [:mail/body :inline?] true))))
+  (is (some #(= :sensitive-value-stored-inline (:error %))
+            (class*/schema-errors
+             (assoc-in schema [:mail/body :inline?] true)))))
+
 (deftest a-projection-is-refused-attribute-by-attribute
   (let [ok {:granted #{:public :internal :personal} :scopes #{:person}}]
     (is (= [] (class*/projection-errors schema [:person/did :mail/participant] ok)))
