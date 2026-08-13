@@ -106,7 +106,11 @@
         schema))
 
 (defn classified?
-  "Whether every attribute a schema mentions carries a class. The check that
-  stops personal data from acquiring a class by default."
+  "Whether every attribute a schema mentions carries a class and no sensitive
+  attribute is declared inline. The check that stops personal data from acquiring
+  a class by default, and that makes inline storage of sensitive values a hard
+  schema error."
   [schema]
-  (empty? (filter #(= :unclassified-attribute (:error %)) (schema-errors schema))))
+  (empty? (filter #(or (= :unclassified-attribute (:error %))
+                       (= :sensitive-value-stored-inline (:error %)))
+                  (schema-errors schema))))

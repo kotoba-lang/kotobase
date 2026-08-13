@@ -101,9 +101,14 @@
   Deliberately returns the keys rather than destroying anything: destruction
   runs in the vault, under its own governor and its own ledger, and a plane
   that could destroy a key from a query path would be a plane that can erase
-  evidence."
-  [schema bindings scopes]
-  (let [scopes (set scopes)
+  evidence.
+
+  If `:fail-on-incomplete? true` is passed in `opts`, throws `ex-info` with
+  `:erasure/incomplete` when sensitive attributes are stored inline in the
+  requested scopes — destroying their keys would not erase them."
+  [schema bindings scopes & [opts]]
+  (let [{:keys [fail-on-incomplete?]} (or opts {})
+        scopes (set scopes)
         attributes (into (sorted-set)
                          (keep (fn [[attribute {:keys [class erasure-scope]}]]
                                  (when (and (contains? scopes erasure-scope)
@@ -115,11 +120,16 @@
                              (when (and (contains? scopes erasure-scope)
                                         (classification/inline-allowed? class))
                                attribute)))
-                     schema)]
-    {:erasure/keys (into (sorted-set) (keep bindings) scopes)
-     :erasure/attributes attributes
-     ;; an inline attribute inside a scope being erased is a problem the plan
-     ;; must name: destroying the key does nothing to it, and it stays in the
-     ;; chain forever
-     :erasure/not-erasable-inline inline
-     :erasure/complete? (empty? inline)}))
+                     schema)
+        plan {:erasure/keys (into (sorted-set) (keep bindings) scopes)
+              :erasure/attributes attributes
+              ;; an inline attribute inside a scope being erased is a problem the plan
+              ;; must name: destroying the key does nothing to it, and it stays in the
+              ;; chain forever
+              :erasure/not-erasable-inline inline
+              :erasure/complete? (empty? inline)}]
+    (when (and fail-on-incomplete? (not (:erasure/complete? plan)))
+      (throw (ex-info "Erasure plan incomplete: sensitive attributes stored inline"
+                      {:erasure/incomplete (:erasure/not-erasable-inline plan)
+                       :erasure/scopes scopes})))
+    plan))

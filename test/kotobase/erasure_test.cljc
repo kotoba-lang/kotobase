@@ -1,6 +1,7 @@
 (ns kotobase.erasure-test
   (:require [clojure.test :refer [deftest is testing]]
-            [kotobase.erasure :as erasure]))
+            [kotobase.erasure :as erasure])
+  (:import [clojure.lang ExceptionInfo]))
 
 (def schema
   {:person/did {:class :public}
@@ -71,3 +72,34 @@
   ;; its own governor and its own ledger.
   (is (every? #(not (re-find #"destroy!|shred!|erase!" (name %)))
               (keys (ns-publics 'kotobase.erasure)))))
+
+(deftest fail-on-incomplete-throws-when-inline-sensitive-exists
+  (let [leaky (assoc schema :mail/subject {:class :internal
+                                           :erasure-scope :person})]
+    (testing "without option returns plan with complete? false"
+      (let [plan (erasure/erasure-plan leaky {:person "k-person" :case "k-case"}
+                                       #{:person})]
+        (is (not (:erasure/complete? plan)))
+        (is (= #{:mail/subject} (:erasure/not-erasable-inline plan)))))
+    (testing "with fail-on-incomplete? throws ex-info"
+      (let [thrown (try (erasure/erasure-plan leaky {:person "k-person" :case "k-case"}
+                                                #{:person}
+                                                {:fail-on-incomplete? true})
+                        (catch ExceptionInfo e e))]
+        (is (instance? ExceptionInfo thrown))
+        (is (re-find #"Erasure plan incomplete" (ex-message thrown)))))
+    (testing "ex-data contains the inline attributes and scopes"
+      (let [ex (try (erasure/erasure-plan leaky {:person "k-person" :case "k-case"}
+                                            #{:person}
+                                            {:fail-on-incomplete? true})
+                    (catch ExceptionInfo e e))]
+        (is (= #{:mail/subject} (:erasure/incomplete (ex-data ex))))
+        (is (= #{:person} (:erasure/scopes (ex-data ex))))))))
+
+(deftest fail-on-incomplete-succeeds-when-plan-is-complete
+  (let [plan (erasure/erasure-plan schema {:person "k-person" :case "k-case"}
+                                   #{:person}
+                                   {:fail-on-incomplete? true})]
+    (is (:erasure/complete? plan))
+    (is (= #{"k-person"} (:erasure/keys plan)))
+    (is (= #{:mail/body} (:erasure/attributes plan)))))
