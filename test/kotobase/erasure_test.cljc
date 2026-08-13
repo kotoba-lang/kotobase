@@ -1,7 +1,6 @@
 (ns kotobase.erasure-test
   (:require [clojure.test :refer [deftest is testing]]
-            [kotobase.erasure :as erasure])
-  (:import [clojure.lang ExceptionInfo]))
+            [kotobase.erasure :as erasure]))
 
 (def schema
   {:person/did {:class :public}
@@ -85,14 +84,14 @@
       (let [thrown (try (erasure/erasure-plan leaky {:person "k-person" :case "k-case"}
                                                 #{:person}
                                                 {:fail-on-incomplete? true})
-                        (catch ExceptionInfo e e))]
-        (is (instance? ExceptionInfo thrown))
+                        (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo) e e))]
+        (is (instance? #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo) thrown))
         (is (re-find #"Erasure plan incomplete" (ex-message thrown)))))
     (testing "ex-data contains the inline attributes and scopes"
       (let [ex (try (erasure/erasure-plan leaky {:person "k-person" :case "k-case"}
                                             #{:person}
                                             {:fail-on-incomplete? true})
-                    (catch ExceptionInfo e e))]
+                    (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo) e e))]
         (is (= #{:mail/subject} (:erasure/incomplete (ex-data ex))))
         (is (= #{:person} (:erasure/scopes (ex-data ex))))))))
 
