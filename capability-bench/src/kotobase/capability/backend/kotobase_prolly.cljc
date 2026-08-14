@@ -102,14 +102,15 @@
                   (pt/scan-prefix get-fn (:avet @st) (w/avet-value-prefix a v)))})
 
   (-range-scan [_ a lo hi]
-    (let [lo-k (w/->v-key lo) hi-k (w/->v-key hi)]
+    (let [lo-k (str (w/avet-attr-prefix a) (w/->v-key lo))
+          ;; Inclusive value hi as exclusive tree hi: every key for `hi`
+          ;; sorts before `attr|vkey(hi)|\uffff`, and the next value sorts after.
+          hi-k (str (w/avet-attr-prefix a) (w/->v-key hi) "|\uffff")]
       {:via :index
-       :value (->> (pt/scan-prefix get-fn (:avet @st) (w/avet-attr-prefix a))
-                   (keep (fn [[k _]]
+       :value (->> (pt/scan-range get-fn (:avet @st) lo-k hi-k)
+                   (mapv (fn [[k _]]
                            (let [[_ vk ek] (str/split k #"\|")]
-                             (when (and (>= (compare vk lo-k) 0)
-                                        (<= (compare vk hi-k) 0))
-                               [ek vk]))))
+                             [ek vk])))
                    vec)}))
 
   (-snapshot-read [_ t e]

@@ -150,20 +150,18 @@
 
   (-range-scan [_ a lo hi]
     (let [k (:shards opts)
-          lo-k (w/->v-key lo) hi-k (w/->v-key hi)]
+          lo-k (str (w/avet-attr-prefix a) (w/->v-key lo))
+          hi-k (str (w/avet-attr-prefix a) (w/->v-key hi) "|\uffff")]
       (bs/message! store k)
       {:via :index-fanout
        :shards-queried k
        :value (->> (range k)
                    (mapcat (fn [i]
                              (let [sh (get-in @st [:shards i])]
-                               (keep (fn [[key _]]
-                                       (let [[_ vk ek] (str/split key #"\|")]
-                                         (when (and (>= (compare vk lo-k) 0)
-                                                    (<= (compare vk hi-k) 0))
-                                           [ek vk])))
-                                     (pt/scan-prefix get-fn (:avet sh)
-                                                     (w/avet-attr-prefix a))))))
+                               (map (fn [[key _]]
+                                      (let [[_ vk ek] (str/split key #"\|")]
+                                        [ek vk]))
+                                    (pt/scan-range get-fn (:avet sh) lo-k hi-k)))))
                    (sort-by first)
                    vec)}))
 
