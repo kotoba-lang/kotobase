@@ -1,7 +1,7 @@
 {
   "name": "kotobase-capability-bench",
   "private": true,
-  "description": "Capability + performance comparison of OrbitDB-, Ceramic- and ActorDB-shaped backends against kotobase's own Prolly/commit-DAG shape.",
+  "description": "Capability + performance comparison of OrbitDB-, Ceramic-, ActorDB- and Holochain-shaped backends against kotobase's own Prolly/commit-DAG shape.",
   "scripts": {
     "setup": "nbb setup.cljs",
     "bench": "nbb --classpath \"$(nbb setup.cljs --print-classpath)\" run.cljs",

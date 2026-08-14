@@ -1,0 +1,11 @@
+workload: {:seed 20260806, :entities 4000, :datoms 20000, :load-txns 16, :update-txns 200, :total-t 216}
+running kotobase-prolly …
+   14.32 puts/txn, 2983 blocks stored
+
+=== replica-sync-interest-scoped ===
+kotobase-prolly       blocks-read=21        entries=49        interest-scoped-sync
+
+=== warrant gossip ===
+kotobase-prolly       UNSUPPORTED(warrant-gossip)
+
+wrote results/prolly-interest-4000.edn

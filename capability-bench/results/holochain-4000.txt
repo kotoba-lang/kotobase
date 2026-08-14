@@ -1,0 +1,53 @@
+workload: {:seed 20260806, :entities 4000, :datoms 20000, :load-txns 16, :update-txns 200, :total-t 216}
+running holochain …
+   15.19 puts/txn, 43038 blocks stored
+
+=== capability matrix ===
+capability               | holochain
+analytical-projection    | -
+cid-verified-read        | yes
+conditional-ref          | -
+covering-index           | yes
+cross-shard-txn          | -
+deterministic-execution  | -
+global-snapshot          | -
+immutable-blocks         | yes
+interest-sync            | yes
+linearizable-txn         | -
+log-replay-sync          | yes
+multi-writer-merge       | -
+range-scan               | yes
+structural-delta-sync    | -
+time-travel              | yes
+verifiable-index         | -
+warrant-gossip           | yes
+
+=== write cost per steady-state transaction ===
+backend               puts     put-bytes   gets     get-bytes   msgs   ms
+holochain             15.19    1683.885    0        0           0      11.18
+
+=== query cost per op ===
+-- point-read
+holochain             2         244.96       0.8       agent-activity          Σblocks-read=200
+-- find-by-value
+holochain             542.36    61899.6      260.378   links                   Σblocks-read=27118 Σlinks-at-base=24962
+-- range-scan
+holochain             262.1     29999.6      292.662   path-links              Σblocks-read=5242 Σbases-visited=120
+-- snapshot-read
+holochain             0         0            0                                 UNSUPPORTED(global-snapshot)
+
+=== replica sync ===
+-- replica-sync-since-load
+holochain             blocks-read=946       entries=946       ms=912.182      log-replay
+-- replica-sync-from-empty
+holochain             blocks-read=12946     entries=12946     ms=17908.48     log-replay
+-- replica-sync-interest-scoped
+holochain             blocks-read=33        entries=33        ms=40.674       interest-scoped-sync
+
+=== warrant gossip (interest-scoped neighbourhood) ===
+holochain             warrants=33       fanout=8      msgs=264      blocks-read=66        ms=52.847
+
+=== stored state ===
+holochain             blocks=43038      bytes=4823034
+
+wrote results/holochain-4000.edn

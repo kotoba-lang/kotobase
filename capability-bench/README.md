@@ -1,11 +1,11 @@
 # kotobase capability-bench
 
-Three distributed-database architectures — **OrbitDB** (Merkle-CRDT oplog),
-**Ceramic** (per-stream event logs + columnar projection) and **ActorDB**
-(actor-per-shard, single writer per shard) — implemented behind one capability
-contract and one datom workload, next to **kotobase's own shape** (three
-content-addressed Prolly Tree indexes + a commit DAG behind a linearizable
-conditional ref).
+Four distributed-database architectures — **OrbitDB** (Merkle-CRDT oplog),
+**Ceramic** (per-stream event logs + columnar projection), **ActorDB**
+(actor-per-shard, single writer per shard) and **Holochain** (per-agent source
+chain + DHT links/anchors) — implemented behind one capability contract and
+one datom workload, next to **kotobase's own shape** (three content-addressed
+Prolly Tree indexes + a commit DAG behind a linearizable conditional ref).
 
 The question this answers is not "which is fastest". It is: *what does each
 architecture refuse to do, and what does the refusal buy?* So every number is
@@ -29,12 +29,12 @@ Real, not simulated:
 
 A model, and it must be read as one:
 
-- **the three foreign architectures are re-implementations of their published
+- **the four foreign architectures are re-implementations of their published
   shapes**, not their code. There is no `js-ipfs`, no libp2p, no
-  `ceramic-one`, no Erlang. What is reproduced is the structure that
-  determines cost — where the writes land, what a query has to materialise,
-  what a replica has to fetch — and structure is what the comparison turns
-  on;
+  `ceramic-one`, no Erlang, no Holochain conductor. What is reproduced is
+  the structure that determines cost — where the writes land, what a query
+  has to materialise, what a replica has to fetch — and structure is what
+  the comparison turns on;
 - **there is no network.** Every store is in-memory, so replication is
   measured in blocks and bytes, not in seconds. That is deliberate: block and
   byte counts are properties of the architecture, latency is a property of
@@ -46,8 +46,8 @@ A model, and it must be read as one:
 
 If you want the honest one-line summary of the epistemic status: this is a
 structural cost comparison with real content addressing, not a deployment
-benchmark, and no number here should be quoted as an OrbitDB, Ceramic or
-ActorDB throughput figure.
+benchmark, and no number here should be quoted as an OrbitDB, Ceramic,
+ActorDB or Holochain conductor throughput figure.
 
 ## Running it
 
@@ -140,6 +140,7 @@ harness guards the operations that genuinely cannot be performed:
 | `:structural-delta-sync` | replica convergence costs O(changed subtrees) |
 | `:log-replay-sync` | replica convergence by replaying missing log entries |
 | `:interest-sync` | a replica may sync only the subset it declared interest in |
+| `:warrant-gossip` | validation receipts for source-chain actions propagate to a neighbourhood |
 | `:analytical-projection` | a columnar projection exists beside the transactional index |
 | `:deterministic-execution` | `old-root + message + code-CID → new-root` is re-executable by a second party |
 
@@ -178,27 +179,30 @@ the most for determinism.
 Run of 2026-08-06, 4 000 entities / 20 000 datoms, bulk-loaded as 16 batched
 transactions, then 200 single-entity steady-state transactions; `actordb` at 8
 shards. Raw output in `results/latest.txt`, full EDN in `results/latest.edn`.
+Holochain-shaped backend added 2026-08-14 on the same seed and harness
+(`results/holochain-4000.txt`); `verify.cljs` agrees on every supported op.
 Counters are exact; milliseconds are interpreter-bound (see the caveats
 above).
 
 ### Capability matrix
 
-| capability | kotobase-prolly | orbit | ceramic | actordb |
-|---|---|---|---|---|
-| immutable-blocks / cid-verified-read | yes | yes | yes | yes |
-| conditional-ref | yes | – | – | yes |
-| linearizable-txn | yes | – | – | yes |
-| cross-shard-txn | – | – | – | yes |
-| multi-writer-merge | – | yes | yes | – |
-| covering-index | yes | – | – | yes |
-| verifiable-index | yes | – | – | yes |
-| range-scan | yes | – | – | yes |
-| global-snapshot | yes | yes | – | yes |
-| time-travel | yes | yes | yes | yes |
-| structural-delta-sync | yes | – | – | yes |
-| log-replay-sync | – | yes | yes | – |
-| interest-sync | – | – | yes | – |
-| analytical-projection | – | – | yes | – |
+| capability | kotobase-prolly | orbit | ceramic | actordb | holochain |
+|---|---|---|---|---|---|
+| immutable-blocks / cid-verified-read | yes | yes | yes | yes | yes |
+| conditional-ref | yes | – | – | yes | – |
+| linearizable-txn | yes | – | – | yes | – |
+| cross-shard-txn | – | – | – | yes | – |
+| multi-writer-merge | – | yes | yes | – | – |
+| covering-index | yes | – | – | yes | yes (typed links) |
+| verifiable-index | yes | – | – | yes | – |
+| range-scan | yes | – | – | yes | yes (path buckets) |
+| global-snapshot | yes | yes | – | yes | – |
+| time-travel | yes | yes | yes | yes | yes (per agent) |
+| structural-delta-sync | yes | – | – | yes | – |
+| log-replay-sync | – | yes | yes | – | yes |
+| interest-sync | yes | – | yes | – | yes |
+| warrant-gossip | – | – | – | – | yes |
+| analytical-projection | – | – | yes | – | – |
 
 `:deterministic-execution` is earned only by the `--fvm` variants, which put a
 `code` CID in the commit so a second party can re-execute the transition.
@@ -208,6 +212,7 @@ above).
 | backend | block puts | put bytes | block gets | get bytes | actor msgs |
 |---|---|---|---|---|---|
 | kotobase-prolly | 14.32 | 176 947 | 22.56 | 274 376 | 0 |
+| holochain | 15.19 | 1 684 | 0 | 0 | 0 |
 | orbit | 1 | 158 | 0 | 0 | 0 |
 | ceramic | 1 | 125 | 0 | 0 | 0 |
 | actordb (8 shards) | 8.15 | 74 276 | 13.49 | 122 461 | 3 |
@@ -220,12 +225,12 @@ current-value index.
 
 ### Query cost, per operation
 
-| operation | kotobase-prolly | orbit | ceramic | actordb (8) |
-|---|---|---|---|---|
-| point read | 3.02 gets / 25.8 KB | **0 gets** (local index) | 1.05 gets / 142 B | 2.15 gets / 17.3 KB |
-| find by value | 3.46 gets / 42.6 KB, `:index` | 0 gets, **4 000 entities scanned** | 81.9 gets amortised, `:projection` | 17.46 gets / 286 KB, **8-way fan-out** |
-| range scan | 16 gets / 176 KB | 0 gets, 4 000 scanned | 0 gets (projection warm) | 30 gets / 335 KB |
-| snapshot at basis | 3 gets / 24.7 KB | **216 gets / 499 KB per op** | **unsupported** | 2.05 gets / 15.1 KB |
+| operation | kotobase-prolly | holochain | orbit | ceramic | actordb (8) |
+|---|---|---|---|---|---|
+| point read | 3.02 gets / 25.8 KB | 2 gets / 245 B (`:agent-activity`) | **0 gets** (local index) | 1.05 gets / 142 B | 2.15 gets / 17.3 KB |
+| find by value | 3.46 gets / 42.6 KB, `:index` | **542 gets / 62 KB**, `:links` at the city base | 0 gets, **4 000 entities scanned** | 81.9 gets amortised, `:projection` | 17.46 gets / 286 KB, **8-way fan-out** |
+| range scan | 16 gets / 176 KB | 262 gets / 30 KB, 6 path buckets | 0 gets, 4 000 scanned | 0 gets (projection warm) | 30 gets / 335 KB |
+| snapshot at basis | 3 gets / 24.7 KB | **unsupported** | **216 gets / 499 KB per op** | **unsupported** | 2.05 gets / 15.1 KB |
 
 Four things worth reading twice:
 
@@ -245,14 +250,26 @@ Four things worth reading twice:
   makes a past state a root you address rather than a computation you redo.
 - **Ceramic refuses.** There is no cross-stream order to anchor a basis to, so
   `snapshot-read` returns `::unsupported`, not a number.
+- **Holochain's typed links are a covering index that is not a tree.** Equality
+  on `:person/city` does not scan 4 000 entries; it walks every CreateLink /
+  DeleteLink op stored at that city anchor — **542 gets** vs datom's 3.46.
+  Completeness is whatever the neighbourhood integrated (`verifiable-index` is
+  absent). Range over score path-buckets of 10 is 262 gets vs datom's 16.
+  Snapshot refuses for the same reason Ceramic does: source chains have no
+  common basis `t`. Interest-sync is real (**33 blocks** for 100 agents vs
+  12 946 from empty). Datom now does the same *kind* of scoped catch-up
+  (**21 blocks**, EAVT prefixes of entities whose last-write head moved) and
+  Ceramic still wins the column at 7. Warrant gossip on the 33 new actions is
+  **33 warrants × fanout 8 = 264 messages**, 66 block reads (warrant + action
+  per peer); the other backends return `UNSUPPORTED(warrant-gossip)`.
 
 ### Replica sync
 
-| scenario | kotobase-prolly | orbit | ceramic | actordb (8) |
-|---|---|---|---|---|
-| from empty | 222 blocks → 60 800 entries | 216 blocks → 216 entries | 4 200 blocks → 4 200 events | 183 blocks (critical path **26**) → 40 400 entries |
-| 200 transactions behind | 273 blocks → 1 192 entries | 200 blocks → 200 entries | 200 blocks → 200 events | 244 blocks (critical path 36) → 792 entries |
-| interest-scoped (100 of 4 000 entities) | 273 blocks (ignores interest) | 200 blocks (ignores interest) | **7 blocks** | 244 blocks (ignores interest) |
+| scenario | kotobase-prolly | holochain | orbit | ceramic | actordb (8) |
+|---|---|---|---|---|---|
+| from empty | 222 blocks → 60 800 entries | 12 946 blocks → 12 946 actions | 216 blocks → 216 entries | 4 200 blocks → 4 200 events | 183 blocks (critical path **26**) → 40 400 entries |
+| 200 transactions behind | 273 blocks → 1 192 entries | 946 blocks → 946 actions | 200 blocks → 200 entries | 200 blocks → 200 events | 244 blocks (critical path 36) → 792 entries |
+| interest-scoped (100 of 4 000 entities) | **21 blocks** | **33 blocks** | 200 blocks (ignores interest) | **7 blocks** | 244 blocks (ignores interest) |
 
 The structural-delta claim survives, but only in the regime it is actually
 about. Catching up a **large** divergence, kotobase moves 60 800 entries for
@@ -266,14 +283,17 @@ sync always beats log replay".
 Two honest artefacts of this workload: OrbitDB's log is 216 entries only
 because the bulk import was batched into 16 transactions — per-entity writes
 would make it 4 200, like Ceramic's, and every snapshot read would scale with
-it. And Ceramic's interest-scoped win is genuine but narrow: it is the only
-shape here that can decline to sync data it does not want.
+it. Ceramic's interest-scoped win is still the cheapest (7 blocks) but it is
+no longer unique: kotobase now compares per-entity last-write heads and
+fetches only the EAVT prefixes that moved (21 blocks); Holochain walks only
+the named agents' source chains (33). Orbit and ActorDB still ignore interest.
 
 ### Stored state after the whole run
 
 | backend | blocks | bytes |
 |---|---|---|
 | kotobase-prolly | 2 983 | 44.3 MB |
+| holochain | 43 038 | 4.82 MB |
 | orbit | 216 | 499 KB |
 | ceramic | 4 200 | 569 KB |
 | actordb (8 shards) | 2 478 | 23.2 MB |

@@ -72,6 +72,10 @@
    :interest-sync
    "A replica may declare interest in a subset and sync only that subset."
 
+   :warrant-gossip
+   "Validation receipts for source-chain actions propagate to a neighbourhood.
+    A peer fetches the warrant and the action without replaying the whole DHT."
+
    :analytical-projection
    "A columnar projection exists for scans/aggregates, separate from the
     transactional index."

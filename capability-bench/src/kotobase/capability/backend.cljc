@@ -3,7 +3,7 @@
 
   Deliberately narrow: transact, read one entity, find by attribute value,
   scan a range, read a past state, and catch a replica up. Those six are
-  enough to separate the three architectures.
+  enough to separate the architectures.
 
   Note what is *not* guarded here. `find-by-value` and `range-scan` are always
   attempted, because a backend without a covering index can still answer them
@@ -32,6 +32,13 @@
   (-info [this]
     "Backend-specific structural facts worth reporting."))
 
+(defprotocol IWarrantGossip
+  (-gossip-warrants [this marker opts]
+    "Propagate validation receipts for actions since `marker`.
+     `opts` may include `:interest` (agent/entity ids) and `:fanout`
+     (neighbourhood size). Only backends that declare `:warrant-gossip`
+     implement this."))
+
 (defn transact! [b txn] (-transact! b txn))
 (defn read-entity [b e] (-read-entity b e))
 (defn find-by-value [b a v] (-find-by-value b a v))
@@ -46,3 +53,13 @@
 (defn checkpoint [b] (-checkpoint b))
 (defn sync-from [b marker opts] (-sync-from b marker opts))
 (defn info [b] (-info b))
+
+(defn gossip-warrants
+  [b marker opts]
+  (cap/guard (:capabilities b) :warrant-gossip
+             (fn []
+               (if (satisfies? IWarrantGossip b)
+                 (-gossip-warrants b marker opts)
+                 {:status cap/unsupported
+                  :capability :warrant-gossip
+                  :why "declared :warrant-gossip but does not implement IWarrantGossip"}))))

@@ -106,7 +106,9 @@
         [sync-cold sync-cold-m] (measure* store #(be/sync-from backend cold {}))
         interest (into #{} (take 100 (:point queries)))
         [sync-interest sync-interest-m]
-        (measure* store #(be/sync-from backend warm {:interest interest}))]
+        (measure* store #(be/sync-from backend warm {:interest interest}))
+        [warrants warrants-m]
+        (measure* store #(be/gossip-warrants backend warm {:interest interest}))]
     {:backend {:id (:id backend) :label (:label backend)
                :capabilities (vec (sort (:capabilities backend)))}
      :info (be/info backend)
@@ -123,6 +125,11 @@
       (assoc (roundm sync-interest-m)
              :report sync-interest
              :interest-size (count interest)
-             :note "meaningful only where :interest-sync is declared")}
+             :note "meaningful only where :interest-sync is declared")
+      :warrant-gossip
+      (assoc (roundm warrants-m)
+             :report warrants
+             :interest-size (count interest)
+             :note "meaningful only where :warrant-gossip is declared")}
      :storage {:blocks (bs/block-count store)
                :bytes (bs/stored-bytes store)}}))

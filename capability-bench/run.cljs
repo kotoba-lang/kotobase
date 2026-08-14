@@ -7,7 +7,7 @@
 ;;   --entities N     entities in the workload           (default 4000)
 ;;   --updates N      steady-state transactions          (default 200)
 ;;   --shards N       shard actors for the actordb shape (default 8)
-;;   --backends a,b   subset of kotobase-prolly,orbit,ceramic,actordb
+;;   --backends a,b   subset of kotobase-prolly,orbit,ceramic,actordb,holochain
 ;;   --fvm            also run every shape inside an FVM host/guest boundary
 ;;   --out FILE       write the full result EDN here     (default results/latest.edn)
 
@@ -21,6 +21,7 @@
             [kotobase.capability.backend.orbit :as orbit]
             [kotobase.capability.backend.ceramic :as ceramic]
             [kotobase.capability.backend.actordb :as actordb]
+            [kotobase.capability.backend.holochain :as holochain]
             ["fs" :as fs]
             ["path" :as path]))
 
@@ -45,9 +46,10 @@
   {"kotobase-prolly" prolly/make
    "orbit" orbit/make
    "ceramic" ceramic/make
-   "actordb" actordb/make})
+   "actordb" actordb/make
+   "holochain" holochain/make})
 
-(def order ["kotobase-prolly" "orbit" "ceramic" "actordb"])
+(def order ["kotobase-prolly" "orbit" "ceramic" "actordb" "holochain"])
 
 (defn- num-arg [k d] (js/parseInt (arg k (str d)) 10))
 
@@ -118,6 +120,23 @@
                         (if-let [cp (get-in ph [:report :critical-path-blocks])]
                           (str "critical-path=" cp)
                           ""))))))
+    (println)
+    (println "=== warrant gossip (interest-scoped neighbourhood) ===")
+    (println "UNSUPPORTED is the honest answer where the architecture has no warrants;")
+    (println "do not read a missing phase as zero cost.")
+    (doseq [r results]
+      (let [ph (get-in r [:phases :warrant-gossip])
+            rep (:report ph)]
+        (println (str (pad (name (get-in r [:backend :id])) 22)
+                      (if (cap/unsupported? rep)
+                        (str "UNSUPPORTED(" (name (:capability rep)) ")")
+                        (str (pad (str "warrants=" (or (:warrants rep) "-")) 18)
+                             (pad (str "fanout=" (or (:fanout rep) "-")) 14)
+                             (pad (str "msgs=" (or (:messages rep)
+                                                   (get ph :messages 0))) 14)
+                             (pad (str "blocks-read=" (or (:blocks-read rep)
+                                                          (:gets ph 0))) 22)
+                             (str "ms=" (:ms ph 0))))))))
     (when fvm?
       (println)
       (println "=== FVM host/guest boundary ===")
