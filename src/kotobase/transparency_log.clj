@@ -50,10 +50,19 @@
                                (verify-signature witness body signature))
                              (:signatures checkpoint))
                  (conj :transparency/signature)
+                 ;; Rollback detection: tree-size must not decrease
                  (and previous
-                      (or (< (:tree-size checkpoint) (:tree-size previous))
-                          (= (:root checkpoint) (:root previous))))
-                 (conj :transparency/rollback))]
+                      (< (:tree-size checkpoint) (:tree-size previous)))
+                 (conj :transparency/rollback)
+                 ;; Duplicate checkpoint detection: same tree-size and root
+                 (and previous
+                      (= (:tree-size checkpoint) (:tree-size previous))
+                      (= (:root checkpoint) (:root previous)))
+                 (conj :transparency/duplicate-checkpoint)
+                 ;; Strict monotonic issued-at timestamps
+                 (and previous
+                      (>= (:issued-at previous) (:issued-at checkpoint)))
+                 (conj :transparency/issued-at-non-monotonic))]
     {:transparency/valid? (empty? errors)
      :transparency/errors errors
      :transparency/checkpoint-cid (digest checkpoint)}))
