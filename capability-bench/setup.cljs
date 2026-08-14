@@ -22,7 +22,7 @@
   [{:name "io-multiformats" :sha "b3b157e683a943d4f2e9362d9366cceefff3f656"}
    {:name "dag-cbor" :sha "4a8a08efb8668fae9c1884d390a6610ca42890d8"}
    {:name "io-ipld" :sha "5d8de535ebc2c10bb90a671ea6019783ecbd2137"}
-   {:name "prolly-tree" :sha "05e3bff85f5ec27d8a9e2f57d3dd74355a3ab738"}
+   {:name "prolly-tree" :sha "1f2e779352d0b4d0eca517c9f139925f0e21aac6"}
    {:name "crdt" :sha "34ae7931914f974f759de8806ddb2f4b24c7f0ea"}
    ;; the real semantic definition identity: canonical DAG-CBOR of checked,
    ;; alpha-normalised, name-free IR (used by run-semantic.cljs)
