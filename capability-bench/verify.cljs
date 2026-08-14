@@ -3,10 +3,10 @@
 ;;
 ;;   nbb --classpath "$(nbb setup.cljs --print-classpath)" verify.cljs
 ;;
-;; A performance comparison between four backends is worthless if they do not
+;; A performance comparison between backends is worthless if they do not
 ;; return the same answers, so this runs the same small workload through all
-;; four and asserts that every supported operation agrees. Exits non-zero on
-;; the first disagreement.
+;; of them and asserts that every supported operation agrees. Exits non-zero
+;; on the first disagreement.
 
 (ns verify
   (:require [clojure.string :as str]
@@ -17,7 +17,8 @@
             [kotobase.capability.backend.kotobase-prolly :as prolly]
             [kotobase.capability.backend.orbit :as orbit]
             [kotobase.capability.backend.ceramic :as ceramic]
-            [kotobase.capability.backend.actordb :as actordb]))
+            [kotobase.capability.backend.actordb :as actordb]
+            [kotobase.capability.backend.holochain :as holochain]))
 
 (def failures (atom 0))
 
@@ -30,7 +31,7 @@
         (println "        actual:  " (pr-str actual)))))
 
 (defn build []
-  (for [f [prolly/make orbit/make ceramic/make actordb/make]]
+  (for [f [prolly/make orbit/make ceramic/make actordb/make holochain/make]]
     (let [store (bs/make)]
       [(f {:store store :shards 4}) store])))
 

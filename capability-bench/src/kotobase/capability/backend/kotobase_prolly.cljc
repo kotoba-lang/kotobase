@@ -7,9 +7,13 @@
   workspace, not a model of them.
 
   What this shape buys: verifiable covering indexes, a global snapshot at any
-  basis, and O(changed-subtree) replica sync via `prolly-tree.diff`.
+  basis, O(changed-subtree) replica sync via `prolly-tree.diff`, and
+  interest-scoped catch-up: a replica that named some entities compares
+  per-entity heads (last-write basis) and fetches only those EAVT prefixes
+  that moved — the same *kind* of scoped sync Ceramic and Holochain have,
+  on top of the covering index they do not.
   What it costs: every transaction rewrites a path in *three* trees and then a
-  commit block — the write amplification the other two architectures avoid by
+  commit block — the write amplification the other architectures avoid by
   giving something up."
   (:require [clojure.string :as str]
             [prolly-tree.core :as pt]
@@ -23,7 +27,7 @@
 (def base-capabilities
   #{:immutable-blocks :cid-verified-read :conditional-ref :linearizable-txn
     :covering-index :verifiable-index :range-scan :global-snapshot
-    :time-travel :structural-delta-sync})
+    :time-travel :structural-delta-sync :interest-sync})
 
 (defn- entity-map-from-eavt
   "EAVT entries for one entity -> current attribute map (max basis wins)."
@@ -83,6 +87,7 @@
           commit-cid (ipld/put-node! put! commit)]
       (bs/cas! store [id :db] (:commit s) commit-cid)
       (swap! st #(-> % (assoc :eavt eavt' :aevt aevt' :avet avet' :commit commit-cid :t t)
+                     (update :entity-heads into (map (fn [e] [e t]) touched))
                      (update :history conj {:t t :commit commit-cid
                                             :eavt eavt' :aevt aevt' :avet avet'})))
       {:commit commit-cid :t t}))
@@ -119,23 +124,43 @@
                                    0)))
                      current-map)})))
 
-  (-checkpoint [_] (select-keys @st [:eavt :aevt :avet :commit :t]))
+  (-checkpoint [_] (select-keys @st [:eavt :aevt :avet :commit :t :entity-heads]))
 
-  (-sync-from [_ marker _opts]
-    ;; The property this shape exists for: two roots that share subtrees are
-    ;; compared by CID, so an unchanged subtree costs one comparison.
-    (let [s @st
-          per-index (for [k [:eavt :aevt :avet]]
-                      (let [d (ptd/diff* get-fn (get marker k) (get s k))]
-                        [k {:blocks-read (:blocks-read d)
-                            :added (count (:added d))
-                            :removed (count (:removed d))
-                            :changed (count (:changed d))}]))]
-      {:via :structural-delta
-       :per-index (into {} per-index)
-       :blocks-read (reduce + (map (comp :blocks-read second) per-index))
-       :entries-transferred (reduce + (map (fn [[_ v]] (+ (:added v) (:changed v)))
-                                           per-index))}))
+  (-sync-from [_ marker {:keys [interest]}]
+    ;; Full catch-up is the three-tree structural diff. Interest-scoped catch-up
+    ;; compares per-entity last-write heads (in the checkpoint, like Ceramic
+    ;; stream tips) and fetches only the EAVT prefixes that moved. The replica
+    ;; can point-read those entities; it does not receive AVET, so
+    ;; find-by-value over the whole database is not part of this sync.
+    (if (seq interest)
+      (let [s @st
+            old (:entity-heads marker)
+            changed (filterv #(not= (get old %) (get (:entity-heads s) %))
+                             interest)
+            reads (atom 0)
+            g (fn [cid] (swap! reads inc) (get-fn cid))
+            entries (reduce + 0
+                            (map (fn [e]
+                                   (count (pt/scan-prefix g (:eavt s)
+                                                          (w/eavt-entity-prefix e))))
+                                 changed))]
+        {:via :interest-scoped-sync
+         :entities-considered (count interest)
+         :entities-changed (count changed)
+         :blocks-read @reads
+         :entries-transferred entries})
+      (let [s @st
+            per-index (for [k [:eavt :aevt :avet]]
+                        (let [d (ptd/diff* get-fn (get marker k) (get s k))]
+                          [k {:blocks-read (:blocks-read d)
+                              :added (count (:added d))
+                              :removed (count (:removed d))
+                              :changed (count (:changed d))}]))]
+        {:via :structural-delta
+         :per-index (into {} per-index)
+         :blocks-read (reduce + (map (comp :blocks-read second) per-index))
+         :entries-transferred (reduce + (map (fn [[_ v]] (+ (:added v) (:changed v)))
+                                             per-index))})))
 
   (-info [_]
     (let [s @st]
@@ -162,4 +187,5 @@
                        fvm? (conj :deterministic-execution)))
       :store store :put! put! :get-fn get
       :opts (assoc opts :code-cid code-cid)
-      :st (atom {:eavt nil :aevt nil :avet nil :commit nil :t 0 :history []})})))
+      :st (atom {:eavt nil :aevt nil :avet nil :commit nil :t 0
+                 :history [] :entity-heads {}})})))
