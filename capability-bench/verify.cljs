@@ -15,6 +15,7 @@
             [kotobase.capability.workload :as w]
             [kotobase.capability.backend :as be]
             [kotobase.capability.backend.kotobase-prolly :as prolly]
+            [kotobase.capability.backend.merkle-bplus :as merkle-bplus]
             [kotobase.capability.backend.orbit :as orbit]
             [kotobase.capability.backend.ceramic :as ceramic]
             [kotobase.capability.backend.actordb :as actordb]
@@ -31,7 +32,7 @@
         (println "        actual:  " (pr-str actual)))))
 
 (defn build []
-  (for [f [prolly/make orbit/make ceramic/make actordb/make holochain/make]]
+  (for [f [prolly/make merkle-bplus/make orbit/make ceramic/make actordb/make holochain/make]]
     (let [store (bs/make)]
       [(f {:store store :shards 4}) store])))
 

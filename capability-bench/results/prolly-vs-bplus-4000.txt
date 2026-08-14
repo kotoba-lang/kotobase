@@ -1,0 +1,36 @@
+workload: {:seed 20260806, :entities 4000, :datoms 20000, :load-txns 16, :update-txns 200, :total-t 216}
+same machine; kotobase-prolly from the paired run, merkle-bplus after midpoint occupancy split.
+
+=== write cost per steady-state transaction ===
+backend               puts     put-bytes   gets     get-bytes
+kotobase-prolly       14.32    176946.675  22.56    274376.4
+merkle-bplus          12.79    78818.21    19.665   144959.48
+
+=== query cost per op ===
+-- point-read
+kotobase-prolly       3.02      25827        index
+merkle-bplus          2.04      15788.57     index
+-- find-by-value
+kotobase-prolly       3.46      42628.8      index
+merkle-bplus          5         31646.24     index
+-- range-scan
+kotobase-prolly       16        175701       index
+merkle-bplus          25        171380       index
+-- snapshot-read
+kotobase-prolly       3         24743        commit-dag
+merkle-bplus          2.05      15747.75     commit-dag
+
+=== replica sync ===
+-- replica-sync-since-load
+kotobase-prolly       blocks-read=273       entries=1192      structural-delta
+merkle-bplus          blocks-read=403       entries=1192      structural-delta
+-- replica-sync-from-empty
+kotobase-prolly       blocks-read=222       entries=60800     structural-delta
+merkle-bplus          blocks-read=342       entries=60800     structural-delta
+-- replica-sync-interest-scoped
+kotobase-prolly       blocks-read=21        entries=49        interest-scoped-sync
+merkle-bplus          blocks-read=14        entries=49        interest-scoped-sync
+
+=== stored state ===
+kotobase-prolly       blocks=2983       bytes=44293549
+merkle-bplus          blocks=3430       bytes=22734073

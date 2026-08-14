@@ -7,7 +7,7 @@
 ;;   --entities N     entities in the workload           (default 4000)
 ;;   --updates N      steady-state transactions          (default 200)
 ;;   --shards N       shard actors for the actordb shape (default 8)
-;;   --backends a,b   subset of kotobase-prolly,orbit,ceramic,actordb,holochain
+;;   --backends a,b   subset of kotobase-prolly,merkle-bplus,orbit,ceramic,actordb,holochain
 ;;   --fvm            also run every shape inside an FVM host/guest boundary
 ;;   --out FILE       write the full result EDN here     (default results/latest.edn)
 
@@ -18,6 +18,7 @@
             [kotobase.capability.workload :as w]
             [kotobase.capability.bench :as bench]
             [kotobase.capability.backend.kotobase-prolly :as prolly]
+            [kotobase.capability.backend.merkle-bplus :as merkle-bplus]
             [kotobase.capability.backend.orbit :as orbit]
             [kotobase.capability.backend.ceramic :as ceramic]
             [kotobase.capability.backend.actordb :as actordb]
@@ -44,12 +45,13 @@
 
 (def builders
   {"kotobase-prolly" prolly/make
+   "merkle-bplus" merkle-bplus/make
    "orbit" orbit/make
    "ceramic" ceramic/make
    "actordb" actordb/make
    "holochain" holochain/make})
 
-(def order ["kotobase-prolly" "orbit" "ceramic" "actordb" "holochain"])
+(def order ["kotobase-prolly" "merkle-bplus" "orbit" "ceramic" "actordb" "holochain"])
 
 (defn- num-arg [k d] (js/parseInt (arg k (str d)) 10))
 

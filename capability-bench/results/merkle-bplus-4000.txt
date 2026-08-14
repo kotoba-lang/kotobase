@@ -1,0 +1,53 @@
+workload: {:seed 20260806, :entities 4000, :datoms 20000, :load-txns 16, :update-txns 200, :total-t 216}
+running merkle-bplus …
+   12.79 puts/txn, 3430 blocks stored
+
+=== capability matrix ===
+capability               | merkle-bplus
+analytical-projection    | -
+cid-verified-read        | yes
+conditional-ref          | yes
+covering-index           | yes
+cross-shard-txn          | -
+deterministic-execution  | -
+global-snapshot          | yes
+immutable-blocks         | yes
+interest-sync            | yes
+linearizable-txn         | yes
+log-replay-sync          | -
+multi-writer-merge       | -
+range-scan               | yes
+structural-delta-sync    | yes
+time-travel              | yes
+verifiable-index         | yes
+warrant-gossip           | -
+
+=== write cost per steady-state transaction ===
+backend               puts     put-bytes   gets     get-bytes   msgs   ms
+merkle-bplus          12.79    78818.21    19.665   144959.48   0      1858.503
+
+=== query cost per op ===
+-- point-read
+merkle-bplus          2.04      15788.57     71.356    index
+-- find-by-value
+merkle-bplus          5         31646.24     121.828   index
+-- range-scan
+merkle-bplus          25        171380       501.06    index
+-- snapshot-read
+merkle-bplus          2.05      15747.75     78.137    commit-dag
+
+=== replica sync ===
+-- replica-sync-since-load
+merkle-bplus          blocks-read=403       entries=1192      structural-delta
+-- replica-sync-from-empty
+merkle-bplus          blocks-read=342       entries=60800     structural-delta
+-- replica-sync-interest-scoped
+merkle-bplus          blocks-read=14        entries=49        interest-scoped-sync
+
+=== warrant gossip (interest-scoped neighbourhood) ===
+merkle-bplus          UNSUPPORTED(warrant-gossip)
+
+=== stored state ===
+merkle-bplus          blocks=3430       bytes=22734073
+
+wrote results/merkle-bplus-4000.edn

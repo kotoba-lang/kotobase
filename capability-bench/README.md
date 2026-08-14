@@ -5,7 +5,9 @@ Four distributed-database architectures — **OrbitDB** (Merkle-CRDT oplog),
 (actor-per-shard, single writer per shard) and **Holochain** (per-agent source
 chain + DHT links/anchors) — implemented behind one capability contract and
 one datom workload, next to **kotobase's own shape** (three content-addressed
-Prolly Tree indexes + a commit DAG behind a linearizable conditional ref).
+Prolly Tree indexes + a commit DAG behind a linearizable conditional ref)
+and a **Merkle B+ cut of that same shape** (occupancy split, identical IPLD
+nodes) so the chunk boundary itself can be billed.
 
 The question this answers is not "which is fastest". It is: *what does each
 architecture refuse to do, and what does the refusal buy?* So every number is
@@ -59,8 +61,10 @@ nbb --classpath "$(nbb setup.cljs --print-classpath)" run.cljs \
 ```
 
 Options: `--entities`, `--updates`, `--shards`, `--backends a,b`, `--fvm`,
-`--out FILE`. Full results land in `results/latest.edn` (EDN, so it transacts
-straight into a datom plane) and the console table in `results/latest.txt`.
+`--out FILE`. `--backends` is a subset of
+`kotobase-prolly,merkle-bplus,orbit,ceramic,actordb,holochain`. Full results
+land in `results/latest.edn` (EDN, so it transacts straight into a datom
+plane) and the console table in `results/latest.txt`.
 
 ## A second benchmark: the semantic code graph
 
@@ -180,29 +184,33 @@ Run of 2026-08-06, 4 000 entities / 20 000 datoms, bulk-loaded as 16 batched
 transactions, then 200 single-entity steady-state transactions; `actordb` at 8
 shards. Raw output in `results/latest.txt`, full EDN in `results/latest.edn`.
 Holochain-shaped backend added 2026-08-14 on the same seed and harness
-(`results/holochain-4000.txt`); `verify.cljs` agrees on every supported op.
-Counters are exact; milliseconds are interpreter-bound (see the caveats
-above).
+(`results/holochain-4000.txt`); occupancy-split Merkle B+ on the same day
+(`results/merkle-bplus-4000.txt`, paired table `results/prolly-vs-bplus-4000.txt`).
+`verify.cljs` agrees on every supported op. Counters are exact; milliseconds
+are interpreter-bound (see the caveats above).
 
 ### Capability matrix
 
-| capability | kotobase-prolly | orbit | ceramic | actordb | holochain |
-|---|---|---|---|---|---|
-| immutable-blocks / cid-verified-read | yes | yes | yes | yes | yes |
-| conditional-ref | yes | – | – | yes | – |
-| linearizable-txn | yes | – | – | yes | – |
-| cross-shard-txn | – | – | – | yes | – |
-| multi-writer-merge | – | yes | yes | – | – |
-| covering-index | yes | – | – | yes | yes (typed links) |
-| verifiable-index | yes | – | – | yes | – |
-| range-scan | yes | – | – | yes | yes (path buckets) |
-| global-snapshot | yes | yes | – | yes | – |
-| time-travel | yes | yes | yes | yes | yes (per agent) |
-| structural-delta-sync | yes | – | – | yes | – |
-| log-replay-sync | – | yes | yes | – | yes |
-| interest-sync | yes | – | yes | – | yes |
-| warrant-gossip | – | – | – | – | yes |
-| analytical-projection | – | – | yes | – | – |
+| capability | kotobase-prolly | merkle-bplus | orbit | ceramic | actordb | holochain |
+|---|---|---|---|---|---|---|
+| immutable-blocks / cid-verified-read | yes | yes | yes | yes | yes | yes |
+| conditional-ref | yes | yes | – | – | yes | – |
+| linearizable-txn | yes | yes | – | – | yes | – |
+| cross-shard-txn | – | – | – | – | yes | – |
+| multi-writer-merge | – | – | yes | yes | – | – |
+| covering-index | yes | yes | – | – | yes | yes (typed links) |
+| verifiable-index | yes | yes | – | – | yes | – |
+| range-scan | yes | yes | – | – | yes | yes (path buckets) |
+| global-snapshot | yes | yes | yes | – | yes | – |
+| time-travel | yes | yes | yes | yes | yes | yes (per agent) |
+| structural-delta-sync | yes | yes | – | – | yes | – |
+| log-replay-sync | – | – | yes | yes | – | yes |
+| interest-sync | yes | yes | – | yes | – | yes |
+| warrant-gossip | – | – | – | – | – | yes |
+| analytical-projection | – | – | – | yes | – | – |
+
+`merkle-bplus` declares the same capabilities as `kotobase-prolly`. The
+difference is the tree cut, not the contract.
 
 `:deterministic-execution` is earned only by the `--fvm` variants, which put a
 `code` CID in the commit so a second party can re-execute the transition.
@@ -212,6 +220,7 @@ above).
 | backend | block puts | put bytes | block gets | get bytes | actor msgs |
 |---|---|---|---|---|---|
 | kotobase-prolly | 14.32 | 176 947 | 22.56 | 274 376 | 0 |
+| merkle-bplus | 12.79 | 78 818 | 19.67 | 144 959 | 0 |
 | holochain | 15.19 | 1 684 | 0 | 0 | 0 |
 | orbit | 1 | 158 | 0 | 0 | 0 |
 | ceramic | 1 | 125 | 0 | 0 | 0 |
@@ -221,16 +230,19 @@ Three covering indexes plus a commit block cost **14× the block writes and
 ~1 400× the bytes** of one append-only entry. That is the price of the
 capability column above it, not an inefficiency: the gets are the index paths
 being read to be rewritten, and the retraction read that keeps AVET a
-current-value index.
+current-value index. Occupancy-split B+ writes **fewer** blocks and **less
+than half** the bytes of Prolly on the same three indexes — a midpoint split
+leaves ~128-entry siblings, CDC keeps ~256-entry chunks. The bill shows up
+on prefix/range and replica delta, not on puts/txn.
 
 ### Query cost, per operation
 
-| operation | kotobase-prolly | holochain | orbit | ceramic | actordb (8) |
-|---|---|---|---|---|---|
-| point read | 3.02 gets / 25.8 KB | 2 gets / 245 B (`:agent-activity`) | **0 gets** (local index) | 1.05 gets / 142 B | 2.15 gets / 17.3 KB |
-| find by value | 3.46 gets / 42.6 KB, `:index` | **542 gets / 62 KB**, `:links` at the city base | 0 gets, **4 000 entities scanned** | 81.9 gets amortised, `:projection` | 17.46 gets / 286 KB, **8-way fan-out** |
-| range scan | 16 gets / 176 KB | 262 gets / 30 KB, 6 path buckets | 0 gets, 4 000 scanned | 0 gets (projection warm) | 30 gets / 335 KB |
-| snapshot at basis | 3 gets / 24.7 KB | **unsupported** | **216 gets / 499 KB per op** | **unsupported** | 2.05 gets / 15.1 KB |
+| operation | kotobase-prolly | merkle-bplus | holochain | orbit | ceramic | actordb (8) |
+|---|---|---|---|---|---|---|
+| point read | 3.02 gets / 25.8 KB | 2.04 gets / 15.8 KB | 2 gets / 245 B (`:agent-activity`) | **0 gets** (local index) | 1.05 gets / 142 B | 2.15 gets / 17.3 KB |
+| find by value | 3.46 gets / 42.6 KB, `:index` | 5 gets / 31.6 KB, `:index` | **542 gets / 62 KB**, `:links` at the city base | 0 gets, **4 000 entities scanned** | 81.9 gets amortised, `:projection` | 17.46 gets / 286 KB, **8-way fan-out** |
+| range scan | 16 gets / 176 KB | 25 gets / 171 KB | 262 gets / 30 KB, 6 path buckets | 0 gets, 4 000 scanned | 0 gets (projection warm) | 30 gets / 335 KB |
+| snapshot at basis | 3 gets / 24.7 KB | 2.05 gets / 15.7 KB | **unsupported** | **216 gets / 499 KB per op** | **unsupported** | 2.05 gets / 15.1 KB |
 
 Four things worth reading twice:
 
@@ -262,14 +274,20 @@ Four things worth reading twice:
   Ceramic still wins the column at 7. Warrant gossip on the 33 new actions is
   **33 warrants × fanout 8 = 264 messages**, 66 block reads (warrant + action
   per peer); the other backends return `UNSUPPORTED(warrant-gossip)`.
+- **Merkle B+ is the same covering indexes with a different cut.** Point
+  hops go 3.02 → 2.04 (packed 256-way, one internal). City equality goes
+  3.46 → 5 and score range 16 → 25: a midpoint split leaves half-full
+  siblings, so a prefix spans more leaves. Overflow must split at the
+  midpoint; left-packing 257 into `[256][1]` fragments every city that used
+  to fit in one leaf. Same answers (`verify.cljs`); different CIDs.
 
 ### Replica sync
 
-| scenario | kotobase-prolly | holochain | orbit | ceramic | actordb (8) |
-|---|---|---|---|---|---|
-| from empty | 222 blocks → 60 800 entries | 12 946 blocks → 12 946 actions | 216 blocks → 216 entries | 4 200 blocks → 4 200 events | 183 blocks (critical path **26**) → 40 400 entries |
-| 200 transactions behind | 273 blocks → 1 192 entries | 946 blocks → 946 actions | 200 blocks → 200 entries | 200 blocks → 200 events | 244 blocks (critical path 36) → 792 entries |
-| interest-scoped (100 of 4 000 entities) | **21 blocks** | **33 blocks** | 200 blocks (ignores interest) | **7 blocks** | 244 blocks (ignores interest) |
+| scenario | kotobase-prolly | merkle-bplus | holochain | orbit | ceramic | actordb (8) |
+|---|---|---|---|---|---|---|
+| from empty | 222 blocks → 60 800 entries | 342 blocks → 60 800 entries | 12 946 blocks → 12 946 actions | 216 blocks → 216 entries | 4 200 blocks → 4 200 events | 183 blocks (critical path **26**) → 40 400 entries |
+| 200 transactions behind | 273 blocks → 1 192 entries | 403 blocks → 1 192 entries | 946 blocks → 946 actions | 200 blocks → 200 entries | 200 blocks → 200 events | 244 blocks (critical path 36) → 792 entries |
+| interest-scoped (100 of 4 000 entities) | **21 blocks** | **14 blocks** | **33 blocks** | 200 blocks (ignores interest) | **7 blocks** | 244 blocks (ignores interest) |
 
 The structural-delta claim survives, but only in the regime it is actually
 about. Catching up a **large** divergence, kotobase moves 60 800 entries for
@@ -278,21 +296,26 @@ Catching up a **small, scattered** one, it reads *more* blocks than OrbitDB
 reads log entries (273 vs 200) — 200 single-entity updates touch most of the
 78 leaves, so almost nothing is shared. A Prolly diff is cheap in proportion
 to what two roots have in common, and that is not the same statement as "delta
-sync always beats log replay".
+sync always beats log replay". Occupancy B+ is the same diff algorithm on
+the same node shape and still reads **403** blocks for those 200 txns (and
+**342** from empty): a split moves unchanged keys into a new CID, so the
+subtree is not shared. That is the number the B+ row existed to produce.
 
 Two honest artefacts of this workload: OrbitDB's log is 216 entries only
 because the bulk import was batched into 16 transactions — per-entity writes
 would make it 4 200, like Ceramic's, and every snapshot read would scale with
 it. Ceramic's interest-scoped win is still the cheapest (7 blocks) but it is
 no longer unique: kotobase now compares per-entity last-write heads and
-fetches only the EAVT prefixes that moved (21 blocks); Holochain walks only
-the named agents' source chains (33). Orbit and ActorDB still ignore interest.
+fetches only the EAVT prefixes that moved (Prolly 21, B+ 14); Holochain walks
+only the named agents' source chains (33). Orbit and ActorDB still ignore
+interest.
 
 ### Stored state after the whole run
 
 | backend | blocks | bytes |
 |---|---|---|
 | kotobase-prolly | 2 983 | 44.3 MB |
+| merkle-bplus | 3 430 | 22.7 MB |
 | holochain | 43 038 | 4.82 MB |
 | orbit | 216 | 499 KB |
 | ceramic | 4 200 | 569 KB |
@@ -301,9 +324,11 @@ the named agents' source chains (33). Orbit and ActorDB still ignore interest.
 The two orders of magnitude are copy-on-write history, not waste. A Prolly leaf
 holds ~256 entries, every touched leaf becomes a *new* immutable block, and the
 old one stays reachable — which is what makes any past basis a root you can
-address. Ceramic stores the most *blocks* (one event per write per stream) and
-the fewest bytes; kotobase stores the fewest blocks per write and the most
-bytes. Deduplication is by CID, so identical subtrees are stored once.
+address. Occupancy B+ stores **more** historical blocks (3 430 vs 2 983) and
+**half** the bytes (22.7 vs 44.3 MB): split siblings are ~128 entries. Ceramic
+stores the most *blocks* (one event per write per stream) and the fewest bytes;
+kotobase stores the fewest blocks per write and the most bytes. Deduplication
+is by CID, so identical subtrees are stored once.
 
 ### Sharding trade curve (actordb, 2 000 entities / 100 transactions)
 
@@ -357,11 +382,14 @@ src/kotobase/capability/blockstore.cljc          instrumented blocks, refs, mess
 src/kotobase/capability/workload.cljc            deterministic datom workload + index key encoding
 src/kotobase/capability/backend.cljc             the six-operation seam
 src/kotobase/capability/backend/kotobase_prolly.cljc
+src/kotobase/capability/backend/merkle_bplus.cljc
+src/kotobase/merkle/bplus.cljc                   occupancy-split Merkle B+ (same IPLD nodes)
 src/kotobase/capability/backend/orbit.cljc
 src/kotobase/capability/backend/ceramic.cljc
 src/kotobase/capability/backend/actordb.cljc
+src/kotobase/capability/backend/holochain.cljc
 src/kotobase/capability/bench.cljc               phases + accounting
-run.cljs / setup.cljs                            nbb entry points
+run.cljs / setup.cljs / verify.cljs              nbb entry points
 ```
 
 Everything except the two entry points is `.cljc`: the backends are portable
