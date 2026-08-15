@@ -54,6 +54,62 @@ This qualifies the bounded linear CID-linked transaction page-chain scheduler.
 Arbitrary branching page-DAG scheduling, unbounded replay, Google-scale
 operation, and Neo4j performance remain explicit open evidence gates.
 
+## The physical plane: block → pack → object
+
+A block's **identity** is its CID. Where those bytes actually are is a separate
+question, and until 2026-08-16 this design answered it only by default: one
+object per CID. Superproject **ADR-2608160100** makes the answer explicit and
+gives it a middle layer.
+
+```text
+L0a  block    IPLD dag-cbor / raw   identity   = the block's own CID
+L0b  pack     CARv2                 location   = (pack CID, file-offset, frame-length)
+L0c  object   S3 / R2 / B2 / IPFS   transport  = object key + HTTP Range
+```
+
+A pack is itself an immutable object with a raw CIDv1 over its own bytes. It
+changes nothing about identity, dedup or verification: a block fetched out of a
+pack is still rehashed before it is decoded.
+
+**Why the middle layer exists.** The measured cost of a read here is round
+trips, not bytes. Production answers a query in ~2.5 s of which 92 % is
+hydration (root ADR-2607310900 訂正3), and 97 % of hydration's *sequential*
+term is the novelty cons chain (root ADR-2608021000) — width 1, depth = the
+number of unfolded transactions, and structurally un-prefetchable because the
+next CID does not exist until the previous block is decoded. Parallelism cannot
+touch that shape. Co-location can: if those blocks are in one pack, one range
+read returns all of them and the chain stays sequential only in logic.
+
+**Backends declare which they are.** Exactly one of `:block-per-object` or
+`:packed-blocks`, with no default — the same discipline as `ref-profiles`,
+for the same reason: a guess here fails silently. A backend declaring
+`:packed-blocks` must also declare the object plane's `:range-read`. Without
+it the only possible implementation is to GET the whole pack for one block,
+which reduces round trips and multiplies transfer — a failure that reports
+success.
+
+**Packing policy is write-locality**: the blocks one commit produces go in one
+pack. A sealed pack is never appended to in place; moving a frame invalidates
+both the catalog and the embedded index while every CID still verifies.
+Compaction writes a new pack and repoints the catalog.
+
+**The catalog lives on the datom plane.** Two questions have two owners: *which
+pack holds this CID* is answered by `:block/pack` / `:block/file-offset` /
+`:block/frame-length` datoms, and *where inside that pack* by the CARv2
+`MultihashIndexSorted` the pack carries. The first is on the datom plane
+because it has to join with commits, tenants and lake objects (ADR-260726:
+join reach is exactly one ref). It is a **projection** — deleting it may only
+cost speed, because scanning the packs rebuilds it.
+
+Large columnar objects do **not** go in packs. A Parquet or Arrow file stays a
+large object read through `:presigned-transfer` and a footer range; packing is
+for the small-block regime, and the index costs 40 bytes per block regardless
+of how big the block is.
+
+The codec is `kotoba-lang/io-ipld-car` (`ipld.car`, `ipld.car.v2`,
+`ipld.car.index`), verified against `@ipld/car` and `go-car` rather than
+against itself. Nothing in this repository writes CAR bytes directly.
+
 Everything below describing `IRefStore`, conditional refs, PostgreSQL, D1, or
 single-writer IPNS is a compatibility/migration surface, not the formal route.
 

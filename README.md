@@ -32,7 +32,12 @@ Datomic:
   transports; PostgreSQL, D1, and mutable IPNS/ref adapters are compatibility
   surfaces and cannot select canonical truth — see
   [`docs/storage-architecture.md`](docs/storage-architecture.md). IPLD is the
-  canonical encoding in every deployment.
+  canonical encoding in every deployment. **Where those blocks physically sit
+  is a separate layer**: blocks are packed into CARv2 archives
+  (`io-ipld-car`) and read back by byte range, so a block's identity stays its
+  own CID while its location is `(pack CID, offset, length)`. One object per
+  CID remains a legal backend profile; it is no longer the default one
+  (superproject ADR-2608160100).
 - **the datom (triple/EAV) itself**, immutable and content-addressed — the
   logical model every query surface shares. It is the right base for a stack
   serving many protocols because a relational row, an RDF quad, a property
@@ -56,7 +61,9 @@ it produced a stack in which every query protocol was expected to route
 through Datalog, which is not what the surfaces that exist actually do.
 
 "kotobase" is the umbrella over the datom-plane repos (bottom-up): content
-addressing (`ipld`/`multiformats`/`dag-cbor`) → content-addressed storage
+addressing (`ipld`/`multiformats`/`dag-cbor`) → block packing
+(`io-ipld-car`, CARv2 — a block's CID is its identity, the pack is its
+location) → content-addressed storage
 (`prolly-tree`) → immutable commit chain / time (`commit-dag`) → 4 covering
 indexes (`arrangement`, query layer in `datalog`) → transact/datoms/q/pull
 (`kotobase-engine`) → CACAO client (`kotobase-client`) → edge runtime
