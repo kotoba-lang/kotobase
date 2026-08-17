@@ -81,8 +81,8 @@
 
 (deftest definitions-are-verified-indexed-and-queryable
   (let [s (local/local-store)]
-    (code/put-definition! s verify (record "cid-helper" [] []))
-    (code/put-definition! s verify (record "cid-main" ["cid-helper"] ["graph-write"]))
+    (code/put-definition! s verify verify (record "cid-helper" [] []))
+    (code/put-definition! s verify verify (record "cid-main" ["cid-helper"] ["graph-write"]))
     (is (= #{"cid-main" "cid-helper"} (code/dependency-closure s "cid-main")))
     (is (= #{"graph-write"} (code/transitive-effects s "cid-main")))
     (is (= ["cid-main"] (code/direct-dependents s "cid-helper")))
@@ -95,45 +95,45 @@
                           :type-cid "cid-type")]
     (is (= :code/missing-type
            (:problem (ex-data
-                      (try (code/put-definition! s verify definition)
+                      (try (code/put-definition! s verify verify definition)
                            (catch #?(:clj clojure.lang.ExceptionInfo
                                      :cljs cljs.core.ExceptionInfo) e e))))))
-    (code/put-type! s verify {:cid "cid-type" :block {:cid "cid-type" "kind" "function"}})
+    (code/put-type! s verify verify {:cid "cid-type" :block {:cid "cid-type" "kind" "function"}})
     (is (= "cid-type"
            (:code.definition/type-cid
-            (code/put-definition! s verify definition))))))
+            (code/put-definition! s verify verify definition))))))
 
 (deftest admission-fails-closed
   (let [s (local/local-store)]
     (testing "CID mismatch"
       (is (= :code/cid-mismatch
              (:problem (ex-data
-                        (try (code/put-definition! s verify
+                        (try (code/put-definition! s verify verify
                                                    {:cid "claimed" :block {:cid "actual"}})
                              (catch #?(:clj clojure.lang.ExceptionInfo
                                        :cljs cljs.core.ExceptionInfo) e e)))))))
     (testing "missing dependency"
       (is (= :code/missing-dependency
              (:problem (ex-data
-                        (try (code/put-definition! s verify
+                        (try (code/put-definition! s verify verify
                                                    (record "cid-main" ["absent"] []))
                              (catch #?(:clj clojure.lang.ExceptionInfo
                                        :cljs cljs.core.ExceptionInfo) e e)))))))))
 
 (deftest artifact-cache-is-keyed-by-code-and-compiler
   (let [s (local/local-store)]
-    (code/put-definition! s verify (record "cid-main" [] []))
+    (code/put-definition! s verify verify (record "cid-main" [] []))
     (is (= :code/artifact-cid-mismatch
            (:problem
             (ex-data
              (try
                (code/put-artifact!
-                s (constantly false)
+                s (constantly false) (constantly false)
                 {:artifact-cid "tampered" :code-root-cid "cid-main"
                  :compiler-contract-cid "cid-compiler" :bytes [1]})
                (catch #?(:clj clojure.lang.ExceptionInfo
                          :cljs cljs.core.ExceptionInfo) e e))))))
-    (code/put-artifact! s (constantly true)
+    (code/put-artifact! s (constantly true) (constantly true)
                         {:artifact-cid "cid-wasm" :code-root-cid "cid-main"
                          :compiler-contract-cid "cid-compiler" :bytes [0 97 115 109]})
     (is (= "cid-wasm" (:artifact-cid
@@ -144,18 +144,18 @@
                     :analyzer-contract-cid "cid-analyzer"
                     :environment-cid "cid-env" :input-cids ["cid-input"]
                     :result {:safe? true}}]
-      (code/cache-put! s verify analysis)
+      (code/cache-put! s verify verify analysis)
       (is (= analysis (code/cache-get s "cid-analysis"))))))
 
 (deftest causal-namespace-commits-resolve-and-retain-history
   (let [s (local/local-store)]
-    (code/put-definition! s verify (record "cid-v1" [] []))
-    (code/put-definition! s verify (record "cid-v2" [] []))
+    (code/put-definition! s verify verify (record "cid-v1" [] []))
+    (code/put-definition! s verify verify (record "cid-v2" [] []))
     (code/put-namespace-commit!
-     s verify {:cid "ns-1" :block {:cid "ns-1"} :parents []
+     s verify verify {:cid "ns-1" :block {:cid "ns-1"} :parents []
                :bindings {"app/main" "cid-v1"}})
     (code/put-namespace-commit!
-     s verify {:cid "ns-2" :block {:cid "ns-2"} :parents ["ns-1"]
+     s verify verify {:cid "ns-2" :block {:cid "ns-2"} :parents ["ns-1"]
                :bindings {"app/main" "cid-v2" "app/old-main" "cid-v1"}})
     (is (= "cid-v2" (code/resolve-name s "ns-2" "app/main")))
     (is (= "cid-v1" (code/resolve-name s "ns-2" "app/old-main")))
@@ -163,8 +163,8 @@
 
 (deftest execution-receipts-bind-code-artifact-authority-and-data
   (let [s (local/local-store)]
-    (code/put-definition! s verify (record "cid-main" [] ["graph-write"]))
-    (code/put-artifact! s (constantly true)
+    (code/put-definition! s verify verify (record "cid-main" [] ["graph-write"]))
+    (code/put-artifact! s (constantly true) (constantly true)
                         {:artifact-cid "cid-wasm" :code-root-cid "cid-main"
                          :compiler-contract-cid "cid-compiler" :bytes [0]})
     (let [receipt
@@ -176,7 +176,7 @@
            :grant-cids ["cid-cacao"] :host-receipt-cids ["cid-host"]
            :granted-effects ["graph-write"] :outcome :success}]
       (is (= #{"graph-write"}
-             (:required-effects (code/put-execution-receipt! s verify receipt))))
+             (:required-effects (code/put-execution-receipt! s verify verify receipt))))
       (is (= "cid-main"
              (:code-root-cid (code/execution-receipt s "cid-receipt"))))
       (is (= :execution/capability-missing
@@ -184,7 +184,7 @@
               (ex-data
                (try
                  (code/put-execution-receipt!
-                  s verify (assoc receipt :cid "denied" :block {:cid "denied"}
+                  s verify verify (assoc receipt :cid "denied" :block {:cid "denied"}
                                   :granted-effects []))
                  (catch #?(:clj clojure.lang.ExceptionInfo
                            :cljs cljs.core.ExceptionInfo) e e)))))))))
@@ -193,7 +193,7 @@
   (let [s (local/local-store)
         identity (portable-identity)
         record {:cid portable-cid :block {:cid portable-cid} :identity identity}]
-    (is (= record (code/put-execution-identity! s verify record)))
+    (is (= record (code/put-execution-identity! s verify verify record)))
     (is (= record (code/execution-identity s portable-cid)))
     (is (some #(= [:db/add portable-cid :execution-identity/db-basis (cid "basis")]
                   (:datom %))
@@ -201,7 +201,7 @@
     (is (= :execution-identity/invalid-descriptor
            (:problem (ex-data
                       (try (code/put-execution-identity!
-                            s verify (assoc record :cid (cid "bad") :block {:cid (cid "bad")}
+                            s verify verify (assoc record :cid (cid "bad") :block {:cid (cid "bad")}
                                             :identity (assoc identity :unknown true)))
                            (catch #?(:clj clojure.lang.ExceptionInfo
                                      :cljs cljs.core.ExceptionInfo) e e))))))))
@@ -215,13 +215,13 @@
                  :query-cid (cid "query") :result-cid (cid "result")
                  :basis (cid "basis") :policy-cid (cid "policy")
                  :tenant "acme" :purpose :payment-review :resource-cids ["INV-42"]}]
-    (code/put-execution-identity! s verify identity-record)
-    (is (= receipt (code/put-query-receipt! s verify receipt)))
+    (code/put-execution-identity! s verify verify identity-record)
+    (is (= receipt (code/put-query-receipt! s verify verify receipt)))
     (is (= receipt (code/query-receipt s (cid "hostreceipt"))))
     (is (= :query-receipt/basis-mismatch
            (:problem (ex-data
                       (try (code/put-query-receipt!
-                            s verify (assoc receipt :cid (cid "other") :block {:cid (cid "other")}
+                            s verify verify (assoc receipt :cid (cid "other") :block {:cid (cid "other")}
                                             :basis (cid "otherbasis")))
                            (catch #?(:clj clojure.lang.ExceptionInfo
                                      :cljs cljs.core.ExceptionInfo) e e))))))))
@@ -229,15 +229,15 @@
 (deftest missing-block-sync-and-artifact-reuse
   (let [source (local/local-store)
         target (local/local-store)]
-    (code/put-definition! source verify (record "cid-helper" [] []))
-    (code/put-definition! source verify
+    (code/put-definition! source verify verify (record "cid-helper" [] []))
+    (code/put-definition! source verify verify
                           (record "cid-main" ["cid-helper"] ["graph-read"]))
     (let [bundle (code/export-closure source "cid-main")]
       (is (= ["cid-helper" "cid-main"]
              (mapv :code.definition/cid bundle)))
       (is (= ["cid-helper" "cid-main"]
              (code/missing-cids target ["cid-main" "cid-helper"])))
-      (code/import-closure! target verify bundle)
+      (code/import-closure! target verify verify bundle)
       (is (empty? (code/missing-cids target ["cid-main" "cid-helper"]))))
     (let [compile-count (atom 0)
           opts {:code-root-cid "cid-main" :compiler-contract-cid "cid-compiler"
@@ -247,6 +247,7 @@
                            {:artifact-cid "cid-wasm" :code-root-cid "cid-main"
                             :compiler-contract-cid "cid-compiler" :bytes [0]})
                 :verify-artifact (constantly true)
+                :verify-artifact-internal (constantly true)
                 :run (fn [_ input] (inc input))}
           first-run (code/execute-code-root! target opts)
           second-run (code/execute-code-root! target opts)]
@@ -261,22 +262,22 @@
         target (remote/kotobase-store (xrpc target-backend))
         artifact {:artifact-cid "cid-wasm" :code-root-cid "cid-main"
                   :compiler-contract-cid "cid-compiler" :bytes [0 97 115 109]}]
-    (code/put-definition! source verify (record "cid-helper" [] []))
-    (code/put-definition! source verify
+    (code/put-definition! source verify verify (record "cid-helper" [] []))
+    (code/put-definition! source verify verify
                           (record "cid-main" ["cid-helper"] ["graph-read"]))
     ;; Prove delta transfer: target already owns the dependency.
-    (code/put-definition! target verify (record "cid-helper" [] []))
-    (code/put-artifact! source #(= [0 97 115 109] (:bytes %)) artifact)
+    (code/put-definition! target verify verify (record "cid-helper" [] []))
+    (code/put-artifact! source #(= [0 97 115 109] (:bytes %)) #(= [0 97 115 109] (:bytes %)) artifact)
     (is (= :code/disclosure-denied
            (:problem
             (ex-data
              (try
-               (code/sync-code-root! source target verify
+               (code/sync-code-root! source target verify verify
                                      {:code-root-cid "cid-main"})
                (catch #?(:clj clojure.lang.ExceptionInfo
                          :cljs cljs.core.ExceptionInfo) e e))))))
     (let [sync (code/sync-code-root!
-                source target verify
+                source target verify verify
                 {:code-root-cid "cid-main"
                  :authorize (constantly true)
                  :compiler-contract-cid "cid-compiler"
@@ -296,9 +297,9 @@
 
 (deftest garbage-collection-is-retention-aware-and-non-destructive
   (let [s (local/local-store)]
-    (code/put-definition! s verify (record "cid-dep" [] []))
-    (code/put-definition! s verify (record "cid-live" ["cid-dep"] []))
-    (code/put-definition! s verify (record "cid-garbage" [] []))
+    (code/put-definition! s verify verify (record "cid-dep" [] []))
+    (code/put-definition! s verify verify (record "cid-live" ["cid-dep"] []))
+    (code/put-definition! s verify verify (record "cid-garbage" [] []))
     (code/pin-root! s {:id "legal-1" :kind :legal-hold :root-cid "cid-live"})
     (is (= #{"cid-live" "cid-dep"} (code/retained-definition-cids s)))
     (is (= #{"cid-garbage"} (:candidates (code/gc-plan s))))
@@ -309,7 +310,7 @@
   (let [s (local/local-store)
         sealed (assoc (record (cid "secret") [] ["graph-read"])
                       :visibility :sealed :sealed-block-cid (cid "envelope"))]
-    (code/put-definition! s verify sealed)
+    (code/put-definition! s verify verify sealed)
     (let [hidden (code/definition-view s (cid "secret") (constantly false))]
       (is (= (cid "envelope") (:code.definition/sealed-block-cid hidden)))
       (is (nil? (:code.definition/block hidden)))
@@ -317,7 +318,7 @@
     (is (some? (:code.definition/block
                 (code/definition-view s (cid "secret") (constantly true)))))
     (code/put-namespace-commit!
-     s verify {:cid "cid-ns" :block {:cid "cid-ns"} :parents []
+     s verify verify {:cid "cid-ns" :block {:cid "cid-ns"} :parents []
                :bindings {"app/main" (cid "secret")}})
     (is (= (cid "secret")
            (code/resolve-qualified-name
@@ -341,21 +342,21 @@
                    :from-contract-cid "contract-v1"
                    :to-contract-cid "contract-v2"
                    :authority-cid "did:key:publisher"}]
-    (code/put-definition! s verify (record "cid-v1" [] []))
-    (code/put-definition! s verify (record "cid-v2" [] []))
+    (code/put-definition! s verify verify (record "cid-v1" [] []))
+    (code/put-definition! s verify verify (record "cid-v2" [] []))
     (is (= :migration/authority-denied
            (:problem
             (ex-data
-             (try (code/put-identity-migration! s verify (constantly false)
+             (try (code/put-identity-migration! s verify verify (constantly false)
                                                 migration)
                   (catch #?(:clj clojure.lang.ExceptionInfo
                             :cljs cljs.core.ExceptionInfo) e e))))))
-    (code/put-identity-migration! s verify (constantly true) migration)
+    (code/put-identity-migration! s verify verify (constantly true) migration)
     (is (= ["cid-v2"] (mapv :to-cid (code/migrations-from s "cid-v1"))))))
 
 (deftest revoked-retention-pins-stop-rooting-code-but-remain-auditable
   (let [s (local/local-store)]
-    (code/put-definition! s verify (record "cid-held" [] []))
+    (code/put-definition! s verify verify (record "cid-held" [] []))
     (code/pin-root! s {:id "hold" :kind :legal-hold :root-cid "cid-held"})
     (is (= #{"cid-held"} (code/retention-roots s)))
     (code/revoke-pin! s "hold" "hold released")

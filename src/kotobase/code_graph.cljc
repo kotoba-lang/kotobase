@@ -3,11 +3,18 @@
 
   This namespace intentionally depends only on IStore. Cryptographic block
   verification is host-injected as `(verify cid block)`, keeping kotobase-clj
-  portable while making verification mandatory on admission."
+  portable while making verification mandatory on admission.
+
+  Dual verification (KOT-SEC-006): every put-*! function accepts an optional
+  `verify-internal` (default: SHA-256 of canonicalized block). The host-injected
+  `verify-host` runs first (fast, trust-assumed); `verify-internal` runs second
+  (slow, mandatory, cryptographically enforced)."
   (:require [clojure.string :as str]
             [kotoba.abi.contract :as abi]
             [kotoba.security.effect :as effect]
-            [kotobase.store :as store]))
+            [kotobase.store :as store])
+  (:import [java.math BigInteger]
+           [java.security MessageDigest]))
 
 (def definitions "code.definitions")
 (def types "code.types")
@@ -26,6 +33,21 @@
   (when-not (pred value)
     (throw (ex-info (name problem) (assoc data :problem problem))))
   value)
+
+(defn compute-cid
+  "Compute SHA-256 CID from a canonicalized block map.
+  Uses pr-str for canonicalization, matching transparency-log and audit-anchor.
+  Returns lowercase hex string (64 chars)."
+  [block]
+  (format "%064x"
+          (BigInteger. 1 (.digest (MessageDigest/getInstance "SHA-256")
+                                  (.getBytes (pr-str block) "UTF-8")))))
+
+(defn verify-internal-default
+  "Default internal verifier: recomputes CID from block and compares.
+  This is the mandatory cryptographic verification that cannot be bypassed."
+  [cid block]
+  (= cid (compute-cid block)))
 
 (defn definition-record
   "Portable storage record from a semantic compiler result. BLOCK remains the
@@ -62,49 +84,62 @@
         [[:db/add cid :code.definition/source-cid source-cid]])))))
 
 (defn put-type!
-  "Verify and store a semantic type block before definitions may reference it."
-  [s verify {:keys [cid block] :as record}]
-  (require-value string? cid :code/type-cid-required {})
-  (require-value some? block :code/type-block-required {:cid cid})
-  (require-value true? (boolean (verify cid block)) :code/type-cid-mismatch {:cid cid})
-  (if-let [existing (store/-get s types cid)]
-    (do (require-value #(= existing %) record :code/type-cid-record-conflict {:cid cid})
-        existing)
-    (do (store/-put s types cid record)
-        (store/-append s datom-stream {:datom [:db/add cid :code.type/kind
-                                                (get block "kind" "unknown")]})
-        record)))
+  "Verify and store a semantic type block before definitions may reference it.
+  Dual verification (KOT-SEC-006): verify-host runs first (fast, trust-assumed),
+  verify-internal runs second (mandatory, SHA-256). Legacy single-arg calls
+  default verify-internal to verify-internal-default."
+  ([s verify record]
+   (put-type! s verify verify-internal-default record))
+  ([s verify-host verify-internal {:keys [cid block] :as record}]
+   (require-value string? cid :code/type-cid-required {})
+   (require-value some? block :code/type-block-required {:cid cid})
+   (require-value true? (boolean (verify-host cid block)) :code/type-cid-mismatch {:cid cid})
+   (require-value true? (boolean (verify-internal cid block)) :code/type-cid-mismatch-internal {:cid cid})
+   (if-let [existing (store/-get s types cid)]
+     (do (require-value #(= existing %) record :code/type-cid-record-conflict {:cid cid})
+         existing)
+     (do (store/-put s types cid record)
+         (store/-append s datom-stream {:datom [:db/add cid :code.type/kind
+                                                    (get block "kind" "unknown")]})
+         record))))
 
 (defn get-type [s cid]
   (store/-get s types cid))
 
 (defn put-definition!
   "Verify and idempotently store one definition plus its Datom projection.
-  VERIFY must return truthy only when CID recomputes from BLOCK. Every declared
-  dependency must already exist, preventing dangling admitted closures."
-  [s verify record]
-  (let [record (definition-record record)
-        cid (require-value string? (:code.definition/cid record)
-                           :code/invalid-cid {})
-        block (:code.definition/block record)]
-    (require-value some? block :code/block-required {:cid cid})
-    (require-value true? (boolean (verify cid block))
-                   :code/cid-mismatch {:cid cid})
-    (when-let [type-cid (:code.definition/type-cid record)]
-      (require-value some? (get-type s type-cid)
-                     :code/missing-type {:cid cid :type-cid type-cid}))
-    (doseq [dep (:code.definition/dependencies record)]
-      (require-value some? (store/-get s definitions dep)
-                     :code/missing-dependency {:cid cid :dependency dep}))
-    (if-let [existing (store/-get s definitions cid)]
-      (do
-        (require-value #(= existing %) record :code/cid-record-conflict {:cid cid})
-        existing)
-      (do
-        (store/-put s definitions cid record)
-        (doseq [datom (definition-datoms record)]
-          (store/-append s datom-stream {:datom datom}))
-        record))))
+  VERIFY-HOST must return truthy only when CID recomputes from BLOCK. Every declared
+  dependency must already exist, preventing dangling admitted closures.
+  Dual verification (KOT-SEC-006): verify-host runs first (fast, trust-assumed),
+  verify-internal runs second (mandatory, SHA-256). Legacy single-arg calls
+  default verify-internal to verify-internal-default."
+  ([s verify record]
+   (put-definition! s verify verify-internal-default record))
+  ([s verify-host verify-internal record]
+   (let [record (definition-record record)
+         cid (require-value string? (:code.definition/cid record)
+                            :code/invalid-cid {})
+         block (:code.definition/block record)]
+     (require-value some? block :code/block-required {:cid cid})
+     (require-value true? (boolean (verify-host cid block))
+                    :code/cid-mismatch {:cid cid})
+     (require-value true? (boolean (verify-internal cid block))
+                    :code/cid-mismatch-internal {:cid cid})
+     (when-let [type-cid (:code.definition/type-cid record)]
+       (require-value some? (get-type s type-cid)
+                      :code/missing-type {:cid cid :type-cid type-cid}))
+     (doseq [dep (:code.definition/dependencies record)]
+       (require-value some? (store/-get s definitions dep)
+                      :code/missing-dependency {:cid cid :dependency dep}))
+     (if-let [existing (store/-get s definitions cid)]
+       (do
+         (require-value #(= existing %) record :code/cid-record-conflict {:cid cid})
+         existing)
+       (do
+         (store/-put s definitions cid record)
+         (doseq [datom (definition-datoms record)]
+           (store/-append s datom-stream {:datom datom}))
+         record)))))
 
 (defn get-definition [s cid]
   (store/-get s definitions cid))
@@ -156,19 +191,33 @@
        (filter #(contains? (transitive-effects s %) effect))
        sort vec))
 
+(defn- verify-artifact-internal-default
+  "Default internal verifier for artifacts: recomputes artifact-cid from bytes."
+  [record]
+  (let [bytes (:bytes record)
+        computed-cid (compute-cid bytes)]
+    (= (:artifact-cid record) computed-cid)))
+
 (defn put-artifact!
-  "Verify and store a derivation-addressed artifact. VERIFY receives the
-  complete record and must recompute artifact-cid from its bytes/envelope."
-  [s verify {:keys [artifact-cid code-root-cid compiler-contract-cid] :as record}]
-  (doseq [[value problem] [[artifact-cid :code/artifact-cid-required]
-                           [code-root-cid :code/code-root-required]
-                           [compiler-contract-cid :code/compiler-contract-required]]]
-    (require-value string? value problem {}))
-  (require-value fn? verify :code/artifact-verifier-required {})
-  (require-value true? (boolean (verify record)) :code/artifact-cid-mismatch
-                 {:artifact-cid artifact-cid})
-  (dependency-closure s code-root-cid)
-  (store/-put s artifacts artifact-cid record))
+  "Verify and store a derivation-addressed artifact. VERIFY-HOST receives the
+  complete record and must recompute artifact-cid from its bytes/envelope.
+  Dual verification (KOT-SEC-006): verify-host runs first (fast, trust-assumed),
+  verify-internal runs second (mandatory, SHA-256 of bytes). Legacy single-arg calls
+  default verify-internal to verify-artifact-internal-default."
+  ([s verify record]
+   (put-artifact! s verify verify-artifact-internal-default record))
+  ([s verify-host verify-internal {:keys [artifact-cid code-root-cid compiler-contract-cid] :as record}]
+   (doseq [[value problem] [[artifact-cid :code/artifact-cid-required]
+                            [code-root-cid :code/code-root-required]
+                            [compiler-contract-cid :code/compiler-contract-required]]]
+     (require-value string? value problem {}))
+   (require-value fn? verify-host :code/artifact-verifier-required {})
+   (require-value true? (boolean (verify-host record)) :code/artifact-cid-mismatch
+                  {:artifact-cid artifact-cid})
+   (require-value true? (boolean (verify-internal record)) :code/artifact-cid-mismatch-internal
+                  {:artifact-cid artifact-cid})
+   (dependency-closure s code-root-cid)
+   (store/-put s artifacts artifact-cid record)))
 
 (defn find-artifact [s code-root-cid compiler-contract-cid]
   (some (fn [cid]
@@ -181,49 +230,62 @@
 (defn cache-put!
   "Admit a content-addressed analysis/test result. Cache identity is valid only
   with explicit code, analyzer, environment, and input identities; ambient
-  results cannot be promoted into the shared cache."
-  [s verify {:keys [cid block code-root-cid analyzer-contract-cid
-                    environment-cid input-cids] :as record}]
-  (doseq [[value problem]
-          [[cid :cache/cid-required]
-           [code-root-cid :cache/code-root-required]
-           [analyzer-contract-cid :cache/analyzer-contract-required]
-           [environment-cid :cache/environment-required]]]
-    (require-value string? value problem {}))
-  (require-value vector? input-cids :cache/inputs-required {:cid cid})
-  (require-value #(every? string? %) input-cids :cache/inputs-invalid {:cid cid})
-  (dependency-closure s code-root-cid)
-  (require-value true? (boolean (verify cid block)) :cache/cid-mismatch {:cid cid})
-  (store/-put s analysis-cache cid record))
+  results cannot be promoted into the shared cache.
+  Dual verification (KOT-SEC-006): verify-host runs first (fast, trust-assumed),
+  verify-internal runs second (mandatory, SHA-256). Legacy single-arg calls
+  default verify-internal to verify-internal-default."
+  ([s verify record]
+   (cache-put! s verify verify-internal-default record))
+  ([s verify-host verify-internal {:keys [cid block code-root-cid analyzer-contract-cid
+                         environment-cid input-cids] :as record}]
+   (doseq [[value problem]
+           [[cid :cache/cid-required]
+            [code-root-cid :cache/code-root-required]
+            [analyzer-contract-cid :cache/analyzer-contract-required]
+            [environment-cid :cache/environment-required]]]
+     (require-value string? value problem {}))
+   (require-value vector? input-cids :cache/inputs-required {:cid cid})
+   (require-value #(every? string? %) input-cids :cache/inputs-invalid {:cid cid})
+   (dependency-closure s code-root-cid)
+   (require-value true? (boolean (verify-host cid block)) :cache/cid-mismatch {:cid cid})
+   (require-value true? (boolean (verify-internal cid block)) :cache/cid-mismatch-internal {:cid cid})
+   (store/-put s analysis-cache cid record)))
 
 (defn cache-get [s cache-cid]
   (store/-get s analysis-cache cache-cid))
 
 (defn put-namespace-commit!
   "Verify and store an immutable name->definition-CID mapping. Parent commits
-  and bound definitions must exist. VERIFY owns CID recomputation."
-  [s verify {:keys [cid block parents bindings] :as commit}]
-  (require-value string? cid :namespace/cid-required {})
-  (require-value true? (boolean (verify cid block)) :namespace/cid-mismatch {:cid cid})
-  (require-value map? bindings :namespace/bindings-required {:cid cid})
-  (doseq [parent parents]
-    (require-value some? (store/-get s namespace-commits parent)
-                   :namespace/missing-parent {:cid cid :parent parent}))
-  (doseq [[name definition-cid] bindings]
-    (require-value string? name :namespace/name-invalid {:cid cid :name name})
-    (require-value some? (get-definition s definition-cid)
-                   :namespace/missing-definition
-                   {:cid cid :name name :definition-cid definition-cid}))
-  (if-let [existing (store/-get s namespace-commits cid)]
-    (do (require-value #(= existing %) commit :namespace/cid-record-conflict {:cid cid})
-        existing)
-    (do
-      (store/-put s namespace-commits cid commit)
-      (doseq [[name definition-cid] bindings]
-        (store/-append s datom-stream
-                       {:datom [:db/add cid :code.namespace/binding
-                                {:name name :definition-cid definition-cid}]}))
-      commit)))
+  and bound definitions must exist. VERIFY-HOST owns CID recomputation.
+  Dual verification (KOT-SEC-006): verify-host runs first (fast, trust-assumed),
+  verify-internal runs second (mandatory, SHA-256). Legacy single-arg calls
+  default verify-internal to verify-internal-default."
+  ([s verify commit]
+   (put-namespace-commit! s verify verify-internal-default commit))
+  ([s verify-host verify-internal commit]
+   (let [{:keys [cid block parents bindings] :as commit} commit]
+     (require-value string? cid :namespace/cid-required {})
+     (require-value true? (boolean (verify-host cid block)) :namespace/cid-mismatch {:cid cid})
+     (require-value true? (boolean (verify-internal cid block)) :namespace/cid-mismatch-internal {:cid cid})
+     (require-value map? bindings :namespace/bindings-required {:cid cid})
+     (doseq [parent parents]
+       (require-value some? (store/-get s namespace-commits parent)
+                      :namespace/missing-parent {:cid cid :parent parent}))
+     (doseq [[name definition-cid] bindings]
+       (require-value string? name :namespace/name-invalid {:cid cid :name name})
+       (require-value some? (get-definition s definition-cid)
+                      :namespace/missing-definition
+                      {:cid cid :name name :definition-cid definition-cid}))
+     (if-let [existing (store/-get s namespace-commits cid)]
+       (do (require-value #(= existing %) commit :namespace/cid-record-conflict {:cid cid})
+           existing)
+       (do
+         (store/-put s namespace-commits cid commit)
+         (doseq [[name definition-cid] bindings]
+           (store/-append s datom-stream
+                          {:datom [:db/add cid :code.namespace/binding
+                                   {:name name :definition-cid definition-cid}]}))
+         commit)))))
 
 (defn namespace-commit [s cid]
   (store/-get s namespace-commits cid))
@@ -270,34 +332,42 @@
   "Store an explicitly authorized attestation relating identities from two
   versioned semantic domains. It does not claim the CIDs are interchangeable;
   consumers decide whether to trust AUTHORITY-CID and the injected AUTHORIZE
-  policy."
-  [s verify authorize {:keys [cid block from-cid to-cid from-contract-cid
-                              to-contract-cid authority-cid] :as migration}]
-  (doseq [[value problem]
-          [[cid :migration/cid-required]
-           [from-cid :migration/from-required]
-           [to-cid :migration/to-required]
-           [from-contract-cid :migration/from-contract-required]
-           [to-contract-cid :migration/to-contract-required]
-           [authority-cid :migration/authority-required]]]
-    (require-value string? value problem {}))
-  (require-value some? (get-definition s from-cid) :migration/from-missing
-                 {:cid from-cid})
-  (require-value some? (get-definition s to-cid) :migration/to-missing
-                 {:cid to-cid})
-  (require-value true? (boolean (verify cid block)) :migration/cid-mismatch
-                 {:cid cid})
-  (require-value true? (boolean (authorize migration))
-                 :migration/authority-denied {:authority-cid authority-cid})
-  (if-let [existing (store/-get s identity-migrations cid)]
-    (do (require-value #(= existing %) migration
-                       :migration/cid-record-conflict {:cid cid})
-        existing)
-    (do (store/-put s identity-migrations cid migration)
-        (store/-append s datom-stream
-                       {:datom [:db/add from-cid :code.identity/migrates-to
-                                {:to-cid to-cid :attestation-cid cid}]})
-        migration)))
+  policy.
+  Dual verification (KOT-SEC-006): verify-host runs first (fast, trust-assumed),
+  verify-internal runs second (mandatory, SHA-256). Legacy single-arg calls
+  default verify-internal to verify-internal-default."
+  ([s verify authorize migration]
+   (put-identity-migration! s verify verify-internal-default authorize migration))
+  ([s verify-host verify-internal authorize migration]
+   (let [{:keys [cid block from-cid to-cid from-contract-cid
+                 to-contract-cid authority-cid] :as mig} migration]
+     (doseq [[value problem]
+             [[cid :migration/cid-required]
+              [from-cid :migration/from-required]
+              [to-cid :migration/to-required]
+              [from-contract-cid :migration/from-contract-required]
+              [to-contract-cid :migration/to-contract-required]
+              [authority-cid :migration/authority-required]]]
+       (require-value string? value problem {}))
+     (require-value some? (get-definition s from-cid) :migration/from-missing
+                    {:cid from-cid})
+     (require-value some? (get-definition s to-cid) :migration/to-missing
+                    {:cid to-cid})
+     (require-value true? (boolean (verify-host cid block)) :migration/cid-mismatch
+                    {:cid cid})
+     (require-value true? (boolean (verify-internal cid block)) :migration/cid-mismatch-internal
+                    {:cid cid})
+     (require-value true? (boolean (authorize mig))
+                    :migration/authority-denied {:authority-cid authority-cid})
+     (if-let [existing (store/-get s identity-migrations cid)]
+       (do (require-value #(= existing %) mig
+                          :migration/cid-record-conflict {:cid cid})
+           existing)
+       (do (store/-put s identity-migrations cid mig)
+           (store/-append s datom-stream
+                          {:datom [:db/add from-cid :code.identity/migrates-to
+                                   {:to-cid to-cid :attestation-cid cid}]})
+           mig)))))
 
 (defn migrations-from [s definition-cid]
   (->> (store/-list s identity-migrations)
@@ -321,67 +391,80 @@
   "C4: verify and persist one execution provenance record. REQUIRED-EFFECTS is
   recomputed from the admitted code graph; every effect must be present in the
   concrete post-intersection GRANTED-EFFECTS. The receipt CID authenticates the
-  complete block but never grants authority by itself."
-  [s verify {:keys [cid block code-root-cid artifact-cid compiler-contract-cid
-                    input-root-cids output-root-cids package-lock-cid policy-cid
-                    grant-cids host-receipt-cids granted-effects outcome]
-             :as receipt}]
-  (doseq [[value problem]
-          [[cid :execution/cid-required]
-           [code-root-cid :execution/code-root-required]
-           [artifact-cid :execution/artifact-required]
-           [compiler-contract-cid :execution/compiler-contract-required]
-           [package-lock-cid :execution/package-lock-required]
-           [policy-cid :execution/policy-required]]]
-    (require-value string? value problem {}))
-  (require-value true? (boolean (verify cid block)) :execution/cid-mismatch {:cid cid})
-  (let [required (transitive-effects s code-root-cid)
-        granted (set granted-effects)
-        missing (set (remove granted required))
-        artifact (store/-get s artifacts artifact-cid)]
-    (require-value some? artifact :execution/artifact-missing {:artifact-cid artifact-cid})
-    (require-value #(= code-root-cid (:code-root-cid %)) artifact
-                   :execution/artifact-code-mismatch {:code-root-cid code-root-cid})
-    (require-value empty? missing :execution/capability-missing
-                   {:required required :granted granted :missing missing})
-    (doseq [[values problem]
-            [[input-root-cids :execution/input-roots-invalid]
-             [output-root-cids :execution/output-roots-invalid]
-             [grant-cids :execution/grants-invalid]
-             [host-receipt-cids :execution/host-receipts-invalid]]]
-      (require-value vector? values problem {}))
-    (require-value keyword? outcome :execution/outcome-required {})
-    (let [record (assoc receipt
-                        :required-effects required
-                        :granted-effects granted)]
-      (if-let [existing (store/-get s execution-receipts cid)]
-        (do (require-value #(= existing %) record
-                           :execution/cid-record-conflict {:cid cid})
-            existing)
-        (do
-          (store/-put s execution-receipts cid record)
-          (doseq [datom
-                  [[:db/add cid :execution/code-root-cid code-root-cid]
-                   [:db/add cid :execution/artifact-cid artifact-cid]
-                   [:db/add cid :execution/policy-cid policy-cid]
-                   [:db/add cid :execution/outcome outcome]]]
-            (store/-append s datom-stream {:datom datom}))
-          record)))))
+  complete block but never grants authority by itself.
+  Dual verification (KOT-SEC-006): verify-host runs first (fast, trust-assumed),
+  verify-internal runs second (mandatory, SHA-256). Legacy single-arg calls
+  default verify-internal to verify-internal-default."
+  ([s verify receipt]
+   (put-execution-receipt! s verify verify-internal-default receipt))
+  ([s verify-host verify-internal {:keys [cid block code-root-cid artifact-cid compiler-contract-cid
+                         input-root-cids output-root-cids package-lock-cid policy-cid
+                         grant-cids host-receipt-cids granted-effects outcome]
+                      :as receipt}]
+   (doseq [[value problem]
+           [[cid :execution/cid-required]
+            [code-root-cid :execution/code-root-required]
+            [artifact-cid :execution/artifact-required]
+            [compiler-contract-cid :execution/compiler-contract-required]
+            [package-lock-cid :execution/package-lock-required]
+            [policy-cid :execution/policy-required]]]
+     (require-value string? value problem {}))
+   (require-value true? (boolean (verify-host cid block)) :execution/cid-mismatch {:cid cid})
+   (require-value true? (boolean (verify-internal cid block)) :execution/cid-mismatch-internal {:cid cid})
+   (let [required (transitive-effects s code-root-cid)
+         granted (set granted-effects)
+         missing (set (remove granted required))
+         artifact (store/-get s artifacts artifact-cid)]
+     (require-value some? artifact :execution/artifact-missing {:artifact-cid artifact-cid})
+     (require-value #(= code-root-cid (:code-root-cid %)) artifact
+                    :execution/artifact-code-mismatch {:code-root-cid code-root-cid})
+     (require-value empty? missing :execution/capability-missing
+                    {:required required :granted granted :missing missing})
+     (doseq [[values problem]
+             [[input-root-cids :execution/input-roots-invalid]
+              [output-root-cids :execution/output-roots-invalid]
+              [grant-cids :execution/grants-invalid]
+              [host-receipt-cids :execution/host-receipts-invalid]]]
+       (require-value vector? values problem {}))
+     (require-value keyword? outcome :execution/outcome-required {})
+     (let [record (assoc receipt
+                         :required-effects required
+                         :granted-effects granted)]
+       (if-let [existing (store/-get s execution-receipts cid)]
+         (do (require-value #(= existing %) record
+                            :execution/cid-record-conflict {:cid cid})
+           existing)
+         (do
+           (store/-put s execution-receipts cid record)
+           (doseq [datom
+                   [[:db/add cid :execution/code-root-cid code-root-cid]
+                    [:db/add cid :execution/artifact-cid artifact-cid]
+                    [:db/add cid :execution/policy-cid policy-cid]
+                    [:db/add cid :execution/outcome outcome]]]
+             (store/-append s datom-stream {:datom datom}))
+           record))))))
 
 (defn execution-receipt [s cid]
   (store/-get s execution-receipts cid))
 
 (defn put-execution-identity!
   "Verify and persist one portable execution identity before its observed
-  result is exposed. The host supplies VERIFY because this portable store does
+  result is exposed. The host supplies VERIFY-HOST because this portable store does
   not choose a hash implementation. The ABI descriptor is closed and contains
   no bearer capability handle; CID verification authenticates its canonical
-  block at the storage boundary."
-  [s verify {:keys [cid block identity]}]
+  block at the storage boundary.
+  Dual verification (KOT-SEC-006): verify-host runs first (fast, trust-assumed),
+  verify-internal runs second (mandatory, SHA-256). Legacy single-arg calls
+  default verify-internal to verify-internal-default."
+  ([s verify record]
+   (put-execution-identity! s verify verify-internal-default record))
+  ([s verify-host verify-internal {:keys [cid block identity]}]
   (require-value string? cid :execution-identity/cid-required {})
   (require-value some? block :execution-identity/block-required {:cid cid})
-  (require-value true? (boolean (verify cid block))
-                 :execution-identity/cid-mismatch {:cid cid})
+  (require-value true? (boolean (verify-host cid block))
+                  :execution-identity/cid-mismatch {:cid cid})
+   (require-value true? (boolean (verify-internal cid block))
+                  :execution-identity/cid-mismatch-internal {:cid cid})
   (require-value abi/valid-execution-identity? identity
                  :execution-identity/invalid-descriptor {:cid cid})
   (let [record {:cid cid :block block :identity identity}]
@@ -410,7 +493,7 @@
                  [:execution-identity/host-receipt-cid (:host-receipt-cids identity)]]
                 value values]
           (store/-append s datom-stream {:datom [:db/add cid attribute value]}))
-        record))))
+        record)))))
 
 (defn execution-identity [s cid]
   (store/-get s execution-identities cid))
@@ -426,9 +509,14 @@
   an execution identity already lists this receipt CID, so including the
   reverse link in the hashed block would create a CID cycle.  Kotobase stores
   that reverse association as an immutable datom after verifying both sides.
-  Raw query results are addressed by RESULT-CID and never projected here."
-  [s verify {:keys [cid block execution-identity-cid query-cid result-cid
-                    basis policy-cid tenant purpose resource-cids] :as receipt}]
+  Raw query results are addressed by RESULT-CID and never projected here.
+  Dual verification (KOT-SEC-006): verify-host runs first (fast, trust-assumed),
+  verify-internal runs second (mandatory, SHA-256). Legacy single-arg calls
+  default verify-internal to verify-internal-default."
+  ([s verify receipt]
+   (put-query-receipt! s verify verify-internal-default receipt))
+  ([s verify-host verify-internal {:keys [cid block execution-identity-cid query-cid result-cid
+                         basis policy-cid tenant purpose resource-cids] :as receipt}]
   (require-value #(= query-receipt-keys (set (keys %))) receipt
                  :query-receipt/invalid-record {})
   (doseq [[value problem] [[cid :query-receipt/cid-required]
@@ -442,7 +530,8 @@
   (require-value keyword? purpose :query-receipt/purpose-required {})
   (require-value #(and (vector? %) (seq %) (every? string? %)) resource-cids
                  :query-receipt/resources-invalid {})
-  (require-value true? (boolean (verify cid block)) :query-receipt/cid-mismatch {:cid cid})
+  (require-value true? (boolean (verify-host cid block)) :query-receipt/cid-mismatch {:cid cid})
+   (require-value true? (boolean (verify-internal cid block)) :query-receipt/cid-mismatch-internal {:cid cid})
   (let [identity-record (execution-identity s execution-identity-cid)
         identity (:identity identity-record)]
     (require-value some? identity-record :query-receipt/execution-identity-missing
@@ -472,7 +561,7 @@
         (doseq [resource-cid resource-cids]
           (store/-append s datom-stream
                          {:datom [:db/add cid :query-receipt/resource-cid resource-cid]}))
-        receipt))))
+        receipt)))))
 
 (defn query-receipt [s cid]
   (store/-get s query-receipts cid))
@@ -496,10 +585,15 @@
   (->> cids (remove #(get-definition s %)) sort vec))
 
 (defn import-closure!
-  "Admit a dependency-first bundle. VERIFY is mandatory and every dependency
-  edge is checked by put-definition!."
-  [s verify records]
-  (mapv #(put-definition! s verify %) records))
+  "Admit a dependency-first bundle. VERIFY-HOST is mandatory and every dependency
+  edge is checked by put-definition! with dual verification.
+  Dual verification (KOT-SEC-006): verify-host runs first (fast, trust-assumed),
+  verify-internal runs second (mandatory, SHA-256). Legacy single-arg calls
+  default verify-internal to verify-internal-default."
+  ([s verify records]
+   (import-closure! s verify verify-internal-default records))
+  ([s verify-host verify-internal records]
+   (mapv #(put-definition! s verify-host verify-internal %) records)))
 
 (defn export-code-graph
   "Definition closure plus the unique semantic type blocks it references."
@@ -514,10 +608,15 @@
      :definitions definitions}))
 
 (defn import-code-graph!
-  "Admit type blocks first, then the dependency-first definition closure."
-  [s verify {:keys [types definitions]}]
-  (doseq [type types] (put-type! s verify type))
-  (import-closure! s verify definitions))
+  "Admit type blocks first, then the dependency-first definition closure.
+  Dual verification (KOT-SEC-006): verify-host runs first (fast, trust-assumed),
+  verify-internal runs second (mandatory, SHA-256). Legacy single-arg calls
+  default verify-internal to verify-internal-default."
+  ([s verify {:keys [types definitions]}]
+   (import-code-graph! s verify verify-internal-default {:types types :definitions definitions}))
+  ([s verify-host verify-internal {:keys [types definitions]}]
+   (doseq [type types] (put-type! s verify-host verify-internal type))
+   (import-closure! s verify-host verify-internal definitions)))
 
 (defn sync-code-root!
   "Synchronize only missing semantic blocks from SOURCE to TARGET.
@@ -525,42 +624,53 @@
   Both endpoints are ordinary IStore values, so they may independently be
   LocalStore or XRPC-backed KotobaseStore instances. AUTHORIZE receives each
   source definition record before disclosure. When COMPILER-CONTRACT-CID is
-  supplied, a matching artifact is transferred only through VERIFY-ARTIFACT."
-  [source target verify
-   {:keys [code-root-cid authorize compiler-contract-cid verify-artifact]
-    :or {authorize (constantly false)}}]
-  (require-value string? code-root-cid :code/code-root-required {})
-  (let [{:keys [types definitions]} (export-code-graph source code-root-cid)
-        _ (doseq [record definitions]
-            (require-value true? (boolean (authorize record))
-                           :code/disclosure-denied
-                           {:cid (:code.definition/cid record)
-                            :visibility (:code.definition/visibility record)}))
-        missing-defs (set (missing-cids target
-                                        (map :code.definition/cid definitions)))
-        definitions (filterv #(contains? missing-defs
-                                         (:code.definition/cid %))
-                             definitions)
-        needed-types (set (keep :code.definition/type-cid definitions))
-        types (filterv #(and (contains? needed-types (:cid %))
-                             (nil? (get-type target (:cid %))))
-                       types)]
-    (import-code-graph! target verify {:types types :definitions definitions})
-    (let [artifact (when compiler-contract-cid
-                     (find-artifact source code-root-cid compiler-contract-cid))
-          artifact-transferred?
-          (boolean
-           (when (and artifact
-                      (nil? (find-artifact target code-root-cid
-                                           compiler-contract-cid)))
-             (require-value fn? verify-artifact
-                            :code/artifact-verifier-required {})
-             (put-artifact! target verify-artifact artifact)))]
-      {:code-root-cid code-root-cid
-       :definition-cids (mapv :code.definition/cid definitions)
-       :type-cids (mapv :cid types)
-       :artifact-cid (:artifact-cid artifact)
-       :artifact-transferred? artifact-transferred?})))
+  supplied, a matching artifact is transferred only through VERIFY-ARTIFACT.
+  Dual verification (KOT-SEC-006): verify-host runs first (fast, trust-assumed),
+  verify-internal runs second (mandatory, SHA-256). Legacy single-arg calls
+  default verify-internal to verify-internal-default."
+  ([source target verify
+    {:keys [code-root-cid authorize compiler-contract-cid verify-artifact]
+      :or {authorize (constantly false)}}]
+   (sync-code-root! source target verify verify-internal-default
+                    {:code-root-cid code-root-cid
+                     :authorize authorize
+                     :compiler-contract-cid compiler-contract-cid
+                     :verify-artifact verify-artifact}))
+  ([source target verify-host verify-internal
+    {:keys [code-root-cid authorize compiler-contract-cid verify-artifact]
+      :or {authorize (constantly false)}}]
+   (require-value string? code-root-cid :code/code-root-required {})
+   (let [{:keys [types definitions]} (export-code-graph source code-root-cid)
+         _ (doseq [record definitions]
+             (require-value true? (boolean (authorize record))
+                            :code/disclosure-denied
+                            {:cid (:code.definition/cid record)
+                             :visibility (:code.definition/visibility record)}))
+         missing-defs (set (missing-cids target
+                                         (map :code.definition/cid definitions)))
+         definitions (filterv #(contains? missing-defs
+                                          (:code.definition/cid %))
+                              definitions)
+         needed-types (set (keep :code.definition/type-cid definitions))
+         types (filterv #(and (contains? needed-types (:cid %))
+                              (nil? (get-type target (:cid %))))
+                        types)]
+     (import-code-graph! target verify-host verify-internal {:types types :definitions definitions})
+     (let [artifact (when compiler-contract-cid
+                      (find-artifact source code-root-cid compiler-contract-cid))
+           artifact-transferred?
+           (boolean
+            (when (and artifact
+                       (nil? (find-artifact target code-root-cid
+                                            compiler-contract-cid)))
+              (require-value fn? verify-artifact
+                             :code/artifact-verifier-required {})
+              (put-artifact! target verify-artifact verify-artifact artifact)))]
+       {:code-root-cid code-root-cid
+        :definition-cids (mapv :code.definition/cid definitions)
+        :type-cids (mapv :cid types)
+        :artifact-cid (:artifact-cid artifact)
+        :artifact-transferred? artifact-transferred?}))))
 
 (defn execute-code-root!
   "C5 host-neutral execution coordinator.
@@ -570,10 +680,15 @@
   receives required effects and must return the concrete granted effect set or
   throw. Existing artifacts are reused by derivation key. This function does
   not persist a receipt because the host must first add its policy/grant/input/
-  output links and content-address that final evidence block."
+  output links and content-address that final evidence block.
+  Dual verification (KOT-SEC-006): verify-artifact-host runs first (fast, trust-assumed),
+  verify-artifact-internal runs second (mandatory, SHA-256 of bytes). Legacy single-arg
+  verify-artifact defaults verify-artifact-internal to verify-artifact-internal-default."
   [s {:keys [code-root-cid compiler-contract-cid input compile run authorize
-             verify-artifact]}]
-  (let [closure (export-code-graph s code-root-cid)
+             verify-artifact verify-artifact-host verify-artifact-internal]}]
+  (let [verify-host (or verify-artifact-host verify-artifact)
+        verify-internal (or verify-artifact-internal verify-artifact-internal-default)
+        closure (export-code-graph s code-root-cid)
         required (transitive-effects s code-root-cid)
         granted (set (authorize required))]
     (require-value empty? (set (remove granted required))
@@ -581,7 +696,7 @@
                    {:required required :granted granted})
     (let [artifact (or (find-artifact s code-root-cid compiler-contract-cid)
                        (let [built (compile closure compiler-contract-cid)]
-                         (put-artifact! s verify-artifact built)
+                         (put-artifact! s verify-host verify-internal built)
                          built))
           result (run artifact input)]
       {:code-root-cid code-root-cid
