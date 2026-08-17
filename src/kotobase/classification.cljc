@@ -29,16 +29,19 @@
 
 (def ^:private rank (into {} (map-indexed (fn [i c] [c i]) classes)))
 
-(def inline-threshold
-  "Above this, a value may not be stored inline. `:internal` is the last class
-  whose values are ordinary datom values."
-  :internal)
+(def ^{:doc "Index in `classes` of the last class whose values may be stored inline.
+  `:internal` at index 1 (0-based)."}
+  inline-threshold-index 1)
+
+(defn inline-threshold
+  "Above this, a value may not be stored inline."
+  [] (nth classes inline-threshold-index))
 
 (defn inline-allowed?
   "May an attribute of this class hold its value directly in the chain?"
   [class*]
   (and (contains? rank class*)
-       (<= (rank class*) (rank inline-threshold))))
+       (<= (rank class*) (rank (inline-threshold)))))
 
 (defn schema-errors
   "What is wrong with a classified schema.
