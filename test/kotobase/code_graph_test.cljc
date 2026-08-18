@@ -97,7 +97,7 @@
            (:problem (ex-data
                       (try (code/put-definition! s verify definition)
                            (catch #?(:clj clojure.lang.ExceptionInfo
-                                     :cljs cljs.core.ExceptionInfo) e e))))))
+                                     :cljs ExceptionInfo) e e))))))
     (code/put-type! s verify {:cid "cid-type" :block {:cid "cid-type" "kind" "function"}})
     (is (= "cid-type"
            (:code.definition/type-cid
@@ -111,14 +111,14 @@
                         (try (code/put-definition! s verify
                                                    {:cid "claimed" :block {:cid "actual"}})
                              (catch #?(:clj clojure.lang.ExceptionInfo
-                                       :cljs cljs.core.ExceptionInfo) e e)))))))
+                                       :cljs ExceptionInfo) e e)))))))
     (testing "missing dependency"
       (is (= :code/missing-dependency
              (:problem (ex-data
                         (try (code/put-definition! s verify
                                                    (record "cid-main" ["absent"] []))
                              (catch #?(:clj clojure.lang.ExceptionInfo
-                                       :cljs cljs.core.ExceptionInfo) e e)))))))))
+                                       :cljs ExceptionInfo) e e)))))))))
 
 (deftest artifact-cache-is-keyed-by-code-and-compiler
   (let [s (local/local-store)]
@@ -132,7 +132,7 @@
                 {:artifact-cid "tampered" :code-root-cid "cid-main"
                  :compiler-contract-cid "cid-compiler" :bytes [1]})
                (catch #?(:clj clojure.lang.ExceptionInfo
-                         :cljs cljs.core.ExceptionInfo) e e))))))
+                         :cljs ExceptionInfo) e e))))))
     (code/put-artifact! s (constantly true)
                         {:artifact-cid "cid-wasm" :code-root-cid "cid-main"
                          :compiler-contract-cid "cid-compiler" :bytes [0 97 115 109]})
@@ -187,7 +187,7 @@
                   s verify (assoc receipt :cid "denied" :block {:cid "denied"}
                                   :granted-effects []))
                  (catch #?(:clj clojure.lang.ExceptionInfo
-                           :cljs cljs.core.ExceptionInfo) e e)))))))))
+                           :cljs ExceptionInfo) e e)))))))))
 
 (deftest portable-execution-identities-are-verified-and-datomized
   (let [s (local/local-store)
@@ -204,7 +204,7 @@
                             s verify (assoc record :cid (cid "bad") :block {:cid (cid "bad")}
                                             :identity (assoc identity :unknown true)))
                            (catch #?(:clj clojure.lang.ExceptionInfo
-                                     :cljs cljs.core.ExceptionInfo) e e))))))))
+                                     :cljs ExceptionInfo) e e))))))))
 
 (deftest query-receipts-are-bound-to-the-identity-basis-policy-and-host-receipt
   (let [s (local/local-store)
@@ -224,7 +224,7 @@
                             s verify (assoc receipt :cid (cid "other") :block {:cid (cid "other")}
                                             :basis (cid "otherbasis")))
                            (catch #?(:clj clojure.lang.ExceptionInfo
-                                     :cljs cljs.core.ExceptionInfo) e e))))))))
+                                     :cljs ExceptionInfo) e e))))))))
 
 (deftest missing-block-sync-and-artifact-reuse
   (let [source (local/local-store)
@@ -274,7 +274,7 @@
                (code/sync-code-root! source target verify
                                      {:code-root-cid "cid-main"})
                (catch #?(:clj clojure.lang.ExceptionInfo
-                         :cljs cljs.core.ExceptionInfo) e e))))))
+                         :cljs ExceptionInfo) e e))))))
     (let [sync (code/sync-code-root!
                 source target verify
                 {:code-root-cid "cid-main"
@@ -327,7 +327,7 @@
             (ex-data
              (try (code/resolve-qualified-name s "cid-ns" "app/main#nope")
                   (catch #?(:clj clojure.lang.ExceptionInfo
-                            :cljs cljs.core.ExceptionInfo) e e))))))
+                            :cljs ExceptionInfo) e e))))))
     (is (= {:bindings {"a" "2" "b" "3"} :conflicts {}}
            (code/merge-bindings {"a" "1"} {"a" "2"} {"a" "1" "b" "3"})))
     (is (contains? (:conflicts
@@ -349,7 +349,7 @@
              (try (code/put-identity-migration! s verify (constantly false)
                                                 migration)
                   (catch #?(:clj clojure.lang.ExceptionInfo
-                            :cljs cljs.core.ExceptionInfo) e e))))))
+                            :cljs ExceptionInfo) e e))))))
     (code/put-identity-migration! s verify (constantly true) migration)
     (is (= ["cid-v2"] (mapv :to-cid (code/migrations-from s "cid-v1"))))))
 

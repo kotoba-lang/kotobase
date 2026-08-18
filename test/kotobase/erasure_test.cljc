@@ -84,14 +84,14 @@
       (let [thrown (try (erasure/erasure-plan leaky {:person "k-person" :case "k-case"}
                                                 #{:person}
                                                 {:fail-on-incomplete? true})
-                        (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo) e e))]
-        (is (instance? #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo) thrown))
+                        (catch #?(:clj clojure.lang.ExceptionInfo :cljs ExceptionInfo) e e))]
+        (is (instance? #?(:clj clojure.lang.ExceptionInfo :cljs ExceptionInfo) thrown))
         (is (re-find #"Erasure plan incomplete" (ex-message thrown)))))
     (testing "ex-data contains the inline attributes and scopes"
       (let [ex (try (erasure/erasure-plan leaky {:person "k-person" :case "k-case"}
                                             #{:person}
                                             {:fail-on-incomplete? true})
-                    (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo) e e))]
+                    (catch #?(:clj clojure.lang.ExceptionInfo :cljs ExceptionInfo) e e))]
         (is (= #{:mail/subject} (:erasure/incomplete (ex-data ex))))
         (is (= #{:person} (:erasure/scopes (ex-data ex))))))))
 

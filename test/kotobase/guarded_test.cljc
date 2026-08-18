@@ -29,7 +29,7 @@
   should not have to know which layer said no — only that nothing was served."
   [f]
   (let [data (ex-data (try (f) (catch #?(:clj clojure.lang.ExceptionInfo
-                                        :cljs cljs.core.ExceptionInfo) e e)))]
+                                        :cljs ExceptionInfo) e e)))]
     (or (:kotobase.guarded/reason data) (:kotobase.query/reason data))))
 
 (deftest a-guarded-read-needs-all-four-or-none-of-it

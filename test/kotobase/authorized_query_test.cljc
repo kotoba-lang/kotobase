@@ -24,7 +24,7 @@
     (is (= :projection-denied
            (:kotobase.query/reason
             (ex-data (try (query/compile! #(assoc (authorize %) :projection #{:invoice/id}) request)
-                          (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo) e e))))))))
+                          (catch #?(:clj clojure.lang.ExceptionInfo :cljs ExceptionInfo) e e))))))))
 
 (deftest query-receipt-projection-keeps-the-query-basis-and-scope
   (let [compiled (query/compile! authorize request)]
@@ -37,11 +37,11 @@
   (is (= :invalid-query
          (:kotobase.query/reason
           (ex-data (try (query/compile! authorize (dissoc request :scope))
-                        (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo) e e))))))
+                        (catch #?(:clj clojure.lang.ExceptionInfo :cljs ExceptionInfo) e e))))))
   (is (= :basis-mismatch
          (:kotobase.query/reason
           (ex-data (try (query/compile! #(assoc (authorize %) :basis "other") request)
-                        (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo) e e)))))))
+                        (catch #?(:clj clojure.lang.ExceptionInfo :cljs ExceptionInfo) e e)))))))
 
 (deftest a-read-that-leaves-no-receipt-is-refused
   ;; `kotobase.admission` will not run an effect until its audit says durable,
@@ -54,7 +54,7 @@
                  (:kotobase.query/reason
                   (ex-data (try (query/execute! rows sink compiled)
                                 (catch #?(:clj clojure.lang.ExceptionInfo
-                                          :cljs cljs.core.ExceptionInfo) e e)))))]
+                                          :cljs ExceptionInfo) e e)))))]
     (is (= :missing-receipt-sink (reason nil)))
     (is (= :receipt-not-durable (reason (fn [_] nil))))
     (is (= :receipt-not-durable (reason (fn [_] {:receipt/durable? false
