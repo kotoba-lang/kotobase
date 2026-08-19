@@ -332,3 +332,39 @@
        (is (= 1 (count (st/-read s "events" 0))))
        (is (= 1 (:revision (st/-snapshot s {:collections ["winner"]
                                             :streams ["events"]})))))))
+
+(deftest strict-idempotency-rejects-identical-replay
+  (let [s (local/local-store {:strict-idempotency? true})
+        request {:tx-id "tx-1" :expected-revision 0
+                 :puts [["docs" "a" 1]] :deletes [] :appends []}
+        receipt (st/-transact s request)]
+    (is (= 1 (:revision receipt)))
+    (is (thrown-with-msg?
+         #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+         #"tx-id replay rejected"
+         (st/-transact s request)))
+    (is (= :kotobase.store/transaction-id-replay
+           (:type (ex-data
+                   (try (st/-transact s request)
+                        (catch #?(:clj clojure.lang.ExceptionInfo :cljs js/Error) e e))))))))
+
+(deftest strict-idempotency-rejects-different-request
+  (let [s (local/local-store {:strict-idempotency? true})
+        request1 {:tx-id "tx-1" :expected-revision 0 :puts [["docs" "a" 1]] :deletes [] :appends []}
+        request2 {:tx-id "tx-1" :expected-revision 1 :puts [["docs" "b" 2]] :deletes [] :appends []}]
+    (st/-transact s request1)
+    (is (thrown-with-msg?
+         #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+         #"tx-id replay rejected"
+         (st/-transact s request2)))
+    (is (= :kotobase.store/transaction-id-replay
+           (:type (ex-data
+                   (try (st/-transact s request2)
+                        (catch #?(:clj clojure.lang.ExceptionInfo :cljs js/Error) e e))))))))
+
+(deftest non-strict-mode-allows-identical-replay
+  (let [s (local/local-store)  ; default: strict-idempotency? false
+        request {:tx-id "tx-1" :expected-revision 0 :puts [["docs" "a" 1]] :deletes [] :appends [["events" {:op :commit}]]}
+        receipt (st/-transact s request)]
+    (is (= receipt (st/-transact s request)))  ; identical replay returns same receipt
+    (is (= 1 (count (st/-read s "events" 0))))))  ; no duplicate appends
