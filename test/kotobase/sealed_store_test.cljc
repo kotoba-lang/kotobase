@@ -41,7 +41,8 @@
           [(assoc options :seal-fn #(assoc (good-seal %)
                                            :envelope/algorithms [:x25519]
                                            :envelope/hybrid? false))
-           (assoc options :seal-fn #(assoc (good-seal %) :envelope/epoch 0))
+           (assoc options :seal-fn #(assoc (good-seal %) :envelope/epoch 1
+                                                      :envelope/algorithms [:x25519]))
            (assoc options :seal-fn #(assoc (good-seal %) :sealed/ciphertext []))
            (assoc options :ciphertext-digest-fn (constantly "wrong"))
            (dissoc options :seal-fn)
@@ -163,3 +164,85 @@
            :request-bounds :approval :hardware-signing :remote-telemetry
            :recovery-readiness}
          (set (kb/production-profile-violations {})))))
+
+(deftest default-policy-requires-hybrid-for-all-epochs
+  (is (= 0 (:hybrid-epoch-floor sealed/default-policy))))
+
+(deftest seal-rejects-epoch-0-without-hybrid
+  (let [epoch0-seal (fn [p]
+                      (assoc (good-seal p)
+                        :envelope/epoch 0
+                        :envelope/algorithms [:x25519]
+                        :envelope/hybrid? false))
+        calls (atom 0)
+        remote (sealed/wrap-xrpc (fn [_ _] (swap! calls inc))
+                                 (assoc options :seal-fn epoch0-seal))]
+    (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+                          #"kotobase sealed write denied"
+                          (remote :put {:coll "vault" :key "one" :val {:secret true}})))
+    (is (zero? @calls))))
+
+(deftest explicit-policy-overrides-default
+  (let [custom-policy {:kotoba.security/crypto-policy-version 1
+                       :mode :hybrid-required
+                       :hybrid-epoch-floor 5}
+        custom-options (assoc options :crypto-policy custom-policy)
+        epoch6-seal (fn [p]
+                      (assoc (good-seal p)
+                        :envelope/epoch 6
+                        :envelope/algorithms [:x25519 :ml-kem-768]
+                        :envelope/hybrid? true))
+        epoch4-seal (fn [p]
+                      (assoc (good-seal p)
+                        :envelope/epoch 4
+                        :envelope/algorithms [:x25519]
+                        :envelope/hybrid? false))
+        calls (atom 0)
+        remote (sealed/wrap-xrpc (fn [_ _] (swap! calls inc) :ok)
+                                 (assoc custom-options :seal-fn epoch6-seal))]
+    ;; With floor=5, epoch 6 (hybrid) should be allowed
+    (is (= :ok (remote :put {:coll "vault" :key "one" :val {:secret true}})))
+    (is (= 1 @calls))
+    ;; epoch 4 (non-hybrid) should be rejected
+    (let [calls2 (atom 0)
+          remote2 (sealed/wrap-xrpc (fn [_ _] (swap! calls2 inc) :ok)
+                                    (assoc custom-options :seal-fn epoch4-seal))]
+      (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+                            #"kotobase sealed write denied"
+                            (remote2 :put {:coll "vault" :key "two" :val {:secret true}})))
+      (is (zero? @calls2)))))
+
+(deftest invalid-policy-missing-hybrid-epoch-floor-throws
+  (let [invalid-policy {:kotoba.security/crypto-policy-version 1
+                        :mode :hybrid-required}
+        bad-options (assoc options :crypto-policy invalid-policy)
+        calls (atom 0)]
+    (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+                          #"hybrid-epoch-floor must be non-negative integer"
+                          (sealed/wrap-xrpc (fn [_ _] (swap! calls inc)) bad-options)))))
+
+(deftest invalid-policy-negative-hybrid-epoch-floor-throws
+  (let [invalid-policy {:kotoba.security/crypto-policy-version 1
+                        :mode :hybrid-required
+                        :hybrid-epoch-floor -1}
+        bad-options (assoc options :crypto-policy invalid-policy)
+        calls (atom 0)]
+    (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+                          #"hybrid-epoch-floor must be non-negative integer"
+                          (sealed/wrap-xrpc (fn [_ _] (swap! calls inc)) bad-options)))))
+
+(deftest startup-audit-log-emitted
+  (let [audit-log (atom [])
+        audit-fn #(swap! audit-log conj %)
+        audit-options (assoc options :crypto-audit! audit-fn)
+        calls (atom 0)
+        remote (sealed/wrap-xrpc (fn [_ _] (swap! calls inc) :ok) audit-options)]
+    ;; First call should emit audit log
+    (is (= :ok (remote :put {:coll "vault" :key "one" :val {:secret true}})))
+    (is (= 1 @calls))
+    (is (= 1 (count @audit-log)))
+    (is (= :kotobase/sealed-store-policy-configured (:event (first @audit-log))))
+    (is (= 0 (:hybrid-epoch-floor (first @audit-log))))
+    ;; Second call should NOT emit another audit log (only once)
+    (is (= :ok (remote :put {:coll "vault" :key "two" :val {:secret true}})))
+    (is (= 1 (count @audit-log)))))

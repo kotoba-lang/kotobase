@@ -10,9 +10,20 @@
 (def default-policy
   {:kotoba.security/crypto-policy-version 1
    :mode :hybrid-required
-   :hybrid-epoch-floor 1})
+   :hybrid-epoch-floor 0})
 
 (def payload-keys {:put :val :append :event})
+
+(defonce policy-audited? (atom false))
+
+(defn- audit-policy-config [policy options]
+  (when (and (not @policy-audited?) (ifn? (:crypto-audit! options)))
+    (swap! policy-audited? (constantly true))
+    ((:crypto-audit! options)
+     {:event :kotobase/sealed-store-policy-configured
+      :policy-version (:kotoba.security/crypto-policy-version policy)
+      :mode (:mode policy)
+      :hybrid-epoch-floor (:hybrid-epoch-floor policy)})))
 
 (defn- present-ciphertext? [ciphertext]
   (and (some? ciphertext)
@@ -20,10 +31,13 @@
 
 (defn evaluate-seal
   [{:keys [seal-fn ciphertext-digest-fn crypto-policy]
-    :or {crypto-policy default-policy}}
+    :or {crypto-policy default-policy}
+    :as options}
    plaintext]
-  (let [sealed (when (ifn? seal-fn) (seal-fn plaintext))
-        crypto-result (crypto/check-production-envelope crypto-policy sealed)
+  (let [validated-policy (crypto/validate-policy! crypto-policy)
+        _ (audit-policy-config validated-policy options)
+        sealed (when (ifn? seal-fn) (seal-fn plaintext))
+        crypto-result (crypto/check-production-envelope validated-policy sealed)
         computed-digest (when (and sealed (ifn? ciphertext-digest-fn))
                           (ciphertext-digest-fn (:sealed/ciphertext sealed)))
         violations (cond-> []
@@ -55,9 +69,12 @@
 
 (defn evaluate-open
   [{:keys [unseal-fn ciphertext-digest-fn crypto-policy]
-    :or {crypto-policy default-policy}}
+    :or {crypto-policy default-policy}
+    :as options}
    sealed]
-  (let [crypto-result (crypto/check-production-envelope crypto-policy sealed)
+  (let [validated-policy (crypto/validate-policy! crypto-policy)
+        _ (audit-policy-config validated-policy options)
+        crypto-result (crypto/check-production-envelope validated-policy sealed)
         computed-digest (when (and (sealed-envelope? sealed)
                                    (ifn? ciphertext-digest-fn))
                           (ciphertext-digest-fn (:sealed/ciphertext sealed)))
@@ -164,10 +181,12 @@
   downgraded or digest-mismatched remote value denies the read before it can
   enter a local query view."
   [xrpc options]
-  (fn [method params]
-    (let [request (if-let [payload-key (get payload-keys method)]
-                    (update params payload-key #(seal-value! options %))
-                    (if (= :transact method)
-                      (seal-transaction! options params)
-                      params))]
-      (open-response! options method (xrpc method request)))))
+  (let [validated-policy (crypto/validate-policy! (:crypto-policy options default-policy))
+        _ (audit-policy-config validated-policy options)]
+    (fn [method params]
+      (let [request (if-let [payload-key (get payload-keys method)]
+                      (update params payload-key #(seal-value! options %))
+                      (if (= :transact method)
+                        (seal-transaction! options params)
+                        params))]
+        (open-response! options method (xrpc method request))))))
