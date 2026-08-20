@@ -143,6 +143,45 @@ kotobase's Datalog-visible datom shape and its IPLD storage shape share one
 vocabulary top to bottom. A *tree* — binary, unlabelled parent/child — is
 just the special case of this graph with exactly one anonymous endpoint role.
 
+### What is vocabulary here, and what is wired
+
+Everything above describes the model. Two parts of it are **not** carried by
+the query engine today, and this section exists so a reader does not infer
+that they are. Recorded in `com-junkawasaki/root` ADR
+`adr-2608201500-incidence-is-the-vocabulary-the-query-engine-stops-at-triples`.
+
+| claim | wired? | where it stops |
+| --- | --- | --- |
+| every block's boundary is walkable | **yes** | `ipld/links` returns `∂(i)` |
+| a link occupies a labelled position | **yes, in the block** | the map key is the `role` |
+| the CID is the relation's identity | **yes** | canonical DAG-CBOR over `∂(i)` |
+| a query can *read* an endpoint's `role` | **no** | `datalog` clauses are `[s p o]` — arity 3, positional, no labels |
+| a query can read `sign` or `mult` | **no** | neither has a position in a triple |
+
+So the incidence framing is exact for **storage** and role-erased for
+**query**. `[e a v]` is the base case of the model, and it is also, today, the
+*only* case the query layer implements. Generalizing `datalog` from a
+positional triple to a labelled boundary is open work, not a description of
+what runs — see that library's own "The relation model above this one".
+
+One consequence worth stating plainly, because it points the other way from
+the usual disclaimer: **`role`, `sign` and `mult` cannot be added to a
+positional clause after the fact.** Erasing labels is not reversible. That
+makes the order in which this gets generalized load-bearing rather than a
+matter of taste.
+
+Two further separations the vocabulary makes and the engine does not:
+
+- **`Hash` vs `Link`.** `Link` is a first-class value (IPLD Data Model kind
+  `:link`, DAG-CBOR tag 42) and drives the `:vaet` reverse index through
+  `ref?`. A bare **multihash** — the key IPNI actually indexes, and the thing
+  that answers *where is it* rather than *what is it* — has no type; in
+  `io-ipni-specs` an EntryChunk's `entries` are documented as
+  "multihashes (octet vectors), not CIDs" and validated per field.
+- **identity vs naming.** `:kotoba.graph/cid` is identity, `:kotoba.graph/head`
+  is naming (`kotoba.protocol.ref`: identity is a hash, a name is a mutable
+  pointer to a hash). Both are strings at a clause position.
+
 ## `IStore` — the storage seam
 
 The **external-storage port** for com-junkawasaki apps — one `IStore` seam that lets an
