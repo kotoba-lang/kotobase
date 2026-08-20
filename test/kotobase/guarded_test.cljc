@@ -1,6 +1,12 @@
 (ns kotobase.guarded-test
   (:require [clojure.set :as set]
             [clojure.test :refer [deftest is testing]]
+            ;; `the-unguarded-surface-is-declared-and-the-declaration-is-true`
+            ;; asks `ns-publics` about `kotobase.core`, so this namespace has
+            ;; to load it. Without the require it passed only because some
+            ;; OTHER test namespace happened to load it first: run this one
+            ;; alone and it threw `No namespace: kotobase.core found`.
+            [kotobase.core]
             [kotobase.guarded :as guarded]))
 
 (def schema
