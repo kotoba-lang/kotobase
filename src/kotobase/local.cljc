@@ -64,7 +64,21 @@
                        :code code})))
     request))
 
+(defprotocol IStateContainer
+  "The one way to reach a LocalStore's state container from outside.
+
+  `snapshot` used to read the field directly with `(.-state s)`. That works
+  on the JVM and in compiled ClojureScript and returns **undefined** under
+  SCI (nbb), where a `deftype` instance exposes neither its fields as
+  properties nor as keywords -- so `snapshot` threw `No protocol method
+  IDeref.-deref defined for type undefined`. A protocol method is the access
+  path all three runtimes agree on."
+  (-state-container [this]))
+
 (deftype LocalStore [state]
+  IStateContainer
+  (-state-container [_] state)
+
   st/IStore
   (-put [_ coll k v]
     (swap! state #(-> % (assoc-in [:docs coll k] v) (update :revision inc)))
@@ -156,5 +170,5 @@
 
 (defn snapshot
   "The store's full state as a value — for checkpointing / pushing to the cloud."
-  [^LocalStore s]
-  @(.-state s))
+  [s]
+  @(-state-container s))

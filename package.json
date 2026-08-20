@@ -1,0 +1,8 @@
+{
+  "name": "kotobase",
+  "private": true,
+  "description": "npm dependencies of the ClojureScript half. kotobase.core reaches kotoba-lang/security, whose cljs branch requires @noble/hashes; without it `nbb` cannot load kotobase.core at all, which is a claim this repo's own README makes.",
+  "dependencies": {
+    "@noble/hashes": "^1.7.1"
+  }
+}
