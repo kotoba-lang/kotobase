@@ -222,6 +222,55 @@
       (throw (ex-info "recovery readiness denies kotobase store" result)))
     result))
 
+(defn production-profile-violations
+  "Return missing fail-closed controls for a Grade-A-candidate remote store.
+  This is deliberately structural; each supplied control still performs its
+  cryptographic/policy validation at construction or immediately before XRPC."
+  [{:keys [sealed-store-options abac-policy abac-attributes
+           information-flow-context transport-profile
+           crypto-required? crypto-policy crypto-envelope
+           capability-required? capability-token-fn capability-context
+           request-encode-fn request-digest-fn
+           request-bounds-required? request-size-fn max-request-bytes
+           approval-required? approvals-fn approval-context
+           hardware-signing-required? hardware-signing-evidence
+           remote-telemetry-required? telemetry-events telemetry-encode-fn
+           telemetry-digest-fn telemetry-append-fn telemetry-verify-ack-fn
+           recovery-required?]}]
+  (cond-> []
+    (nil? sealed-store-options) (conj :sealed-store)
+    (nil? abac-policy) (conj :abac-policy)
+    (nil? abac-attributes) (conj :abac-attributes)
+    (nil? information-flow-context) (conj :information-flow)
+    (nil? transport-profile) (conj :transport-profile)
+    (not (and crypto-required? crypto-policy crypto-envelope))
+    (conj :crypto-policy)
+    (not (and capability-required? (ifn? capability-token-fn)
+              capability-context (ifn? request-encode-fn)
+              (ifn? request-digest-fn)))
+    (conj :signed-capability)
+    (not (and request-bounds-required? (ifn? request-size-fn)
+              (nat-int? max-request-bytes) (pos? max-request-bytes)))
+    (conj :request-bounds)
+    (not (and approval-required? (ifn? approvals-fn) approval-context))
+    (conj :approval)
+    (not (and hardware-signing-required? hardware-signing-evidence))
+    (conj :hardware-signing)
+    (not (and remote-telemetry-required? telemetry-events
+              (ifn? telemetry-encode-fn) (ifn? telemetry-digest-fn)
+              (ifn? telemetry-append-fn) (ifn? telemetry-verify-ack-fn)))
+    (conj :remote-telemetry)
+    (not recovery-required?) (conj :recovery-readiness)))
+
+(defn enforce-production-profile! [options]
+  (let [violations (production-profile-violations options)]
+    (when (seq violations)
+      (throw (ex-info "incomplete production kotobase security profile"
+                      {:kotobase/problem :incomplete-production-profile
+                       :deployment-profile :production
+                       :kotobase/violations violations})))
+    options))
+
 (deftype KotobaseStore [xrpc]
   st/IStore
   (-put  [_ coll k v] (xrpc :put  {:coll coll :key k :val v}))
@@ -243,15 +292,22 @@
 
 (defn kotobase-store
   "A store backed by kotobase.net through the injected `xrpc` fn
-  `(fn [method params] -> result)`."
+  `(fn [method params] -> result)`.
+
+  `:deployment-profile :production` is fail-closed: a production remote store
+  cannot be constructed without `:sealed-store-options`. The one-argument
+  form and non-production profiles remain available for local compatibility
+  and tests, but they make no production confidentiality claim."
   ([xrpc] (->KotobaseStore xrpc))
   ([xrpc {:keys [transactional? abac-policy information-flow-context
                  transport-profile crypto-required? capability-required?
                  hardware-signing-required? remote-telemetry-required?
                  approval-required? request-bounds-required?
-                 recovery-required? sealed-store-options]
+                 recovery-required? sealed-store-options deployment-profile]
           :as options}]
-   (let [_ (when recovery-required? (enforce-recovery-readiness! options))
+   (let [_ (when (= :production deployment-profile)
+             (enforce-production-profile! options))
+         _ (when recovery-required? (enforce-recovery-readiness! options))
          xrpc (if sealed-store-options
                 (sealed-store/wrap-xrpc xrpc sealed-store-options)
                 xrpc)

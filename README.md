@@ -2,6 +2,14 @@
 
 [![CI](https://github.com/kotoba-lang/kotobase/actions/workflows/ci.yml/badge.svg)](https://github.com/kotoba-lang/kotobase/actions/workflows/ci.yml)
 
+The primary API is now `kotobase.core`: `open`, `transact!`, `datoms`, `q`,
+`query`, and `pull` over an injected `kotobase-storage` backend. PostgreSQL,
+S3/R2, and IPFS/IPNS are provider adapters at the immutable-block/mutable-ref
+boundary. See [`docs/storage-architecture.md`](docs/storage-architecture.md).
+
+The document/stream `kotobase.store/IStore` section below is a legacy
+compatibility surface; new database backends must not target it.
+
 **The datom database of the kotoba stack — the _Datomic_ to kotoba's _Clojure_**
 (ADR-2607032500). kotobase persists, indexes, Datalog-queries, and
 time-versions the datom model that the [**`kotoba`**](https://github.com/kotoba-lang/kotoba)
@@ -138,6 +146,25 @@ Two shapes of state cover both apps:
 ;; Cloud — same calls, persisted to kotobase.net (host injects `xrpc`, e.g. fetch)
 (def s (kb/kotobase-store (fn [method params] (call-kotobase! method params))))
 ```
+
+Production callers must select the production profile and supply the sealed
+store adapter. The profile also requires ABAC, information-flow, mTLS,
+hybrid-crypto, signed-capability, request-bound, approval, hardware-signing,
+remote-telemetry and recovery-readiness controls. Construction fails before
+any XRPC call if any control is absent:
+
+```clojure
+(kb/kotobase-store xrpc
+  {:deployment-profile :production
+   :sealed-store-options {:seal-fn seal!
+                          :ciphertext-digest-fn ciphertext-digest}
+   ;; plus the mandatory policy/evidence inputs documented by
+   ;; kotobase.kotobase/production-profile-violations
+   })
+```
+
+The one-argument form is a compatibility/development surface and carries no
+production confidentiality claim.
 
 The contract suite asserts `KotobaseStore ≡ LocalStore` over a faithful transport, so a
 live kotobase.net backend is correct iff it passes the same checks
