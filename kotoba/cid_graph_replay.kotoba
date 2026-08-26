@@ -63,8 +63,8 @@
                                                  (string-concat "|" e2-two))))))
 
 (defn check-cid-order [] :i64
-  (let [cid-a "bafyreibwfgmt5jsji4cspt6ox2t62iyzvs7dmira5kf7yh43dl7qgwshiy"
-        cid-b "bafyreicvawobsiiahlx2avv45k6mpqnejr6ryfdqax7gfvrk2hrf3gez4m"]
+  (let [cid-a "bafyreiag3yx3fa2ozm26vnia56zbjgnkbder3okgazvhecuwwuaqte7y7e"
+        cid-b "bafyreiduhgcp3liz2o26cx5qk23hs7opxpqyus37kzovtgwigv7png4goi"]
     (if (= (cid-less-loop cid-a cid-b 0) 1)
       (if (= (cid-less-loop cid-b cid-a 0) 0) 1 0)
       0)))
@@ -72,16 +72,16 @@
 (defn check-forward [] :i64
   (if (string=?
        (merge-two
-        "bafyreibwfgmt5jsji4cspt6ox2t62iyzvs7dmira5kf7yh43dl7qgwshiy" 1
-        "bafyreicvawobsiiahlx2avv45k6mpqnejr6ryfdqax7gfvrk2hrf3gez4m" 2)
+        "bafyreiag3yx3fa2ozm26vnia56zbjgnkbder3okgazvhecuwwuaqte7y7e" 1
+        "bafyreiduhgcp3liz2o26cx5qk23hs7opxpqyus37kzovtgwigv7png4goi" 2)
        "Alice|branch-b|Bob")
     1 0))
 
 (defn check-reversed [] :i64
   (if (string=?
        (merge-two
-        "bafyreicvawobsiiahlx2avv45k6mpqnejr6ryfdqax7gfvrk2hrf3gez4m" 2
-        "bafyreibwfgmt5jsji4cspt6ox2t62iyzvs7dmira5kf7yh43dl7qgwshiy" 1)
+        "bafyreiduhgcp3liz2o26cx5qk23hs7opxpqyus37kzovtgwigv7png4goi" 2
+        "bafyreiag3yx3fa2ozm26vnia56zbjgnkbder3okgazvhecuwwuaqte7y7e" 1)
        "Alice|branch-b|Bob")
     1 0))
 

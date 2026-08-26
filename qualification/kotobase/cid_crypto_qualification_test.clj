@@ -54,14 +54,14 @@
         (str/split-lines (str/trim output))))
 
 (def ^:private criss-cross-commit-cids
-  ["bafyreiffw4suqdc4xspoynrmgmopmb7coeswj7t3bepkt5d4ekckhs7uhi"
-   "bafyreifzwgiv54mo6jqwg2shy67hlc22ms75nnwil3m6xy2vd33moek5ga"
-   "bafyreiagclnpln5ktgej5r5bfuatmxrffnjn6dxfavys4k32glw53fnrmy"
-   "bafyreigryi4wmpyrfo3nzyxwtf4anas2zegwpc6v6633d53ido2nzmj52i"
-   "bafyreigv4olpcmyj74fxpxtjxruqqyf5pyt3nlpyscpvoivzeyht35s6bi"
-   "bafyreih2imvhagfyy5fqo6eaksge4qtrfo72iz22evd3b52ybnn7sb6eyi"
-   "bafyreifq3ymz7r22wdxcoft2pgligaisqiuqw43o773iaz3aaaonhthqqu"
-   "bafyreidgroqyvk5h6a6susrowhncmd6whbmbvzgpqqy53nyqjecqpvnf4a"])
+  ["bafyreiek4yprp7fqaa3zkrpc3zk7codjeolghwys5q75suuen3eo2ank5m"
+   "bafyreievdinujzs67f2iqjf7qtrpt4gihowpkrrylp3lndvwrz3tox3lla"
+   "bafyreihgdtv3t62mz5uekgmgxd6it5wwkhxawmeqlarm7h7w4mwmrcrqu4"
+   "bafyreig5aky4vod7ntzvm5eny4sps6wqkdxfyg7opgtpvp5lf4yytamc5a"
+   "bafyreibmcnjg2vhpg3iwvyyqg5ae2g43barquy26rwt2rnmqxugnepwnka"
+   "bafyreihxlieebhc73b47uqe3mhmfshjgijolwmyec3uwkb33g6iybbi43i"
+   "bafyreigvefq34kimvvnerd6wrglal7ckkvf56mhz57vtpzdhr3mjuhclfy"
+   "bafyreihd4fqt2wu2z5yvy57xb6oqijlv4abfb66v2hyrejbyzzgb33wgtm"])
 
 (defn- cbor-text-item-hex [value]
   (str "783b" (apply str (map #(format "%02x" (int %)) value))))
@@ -601,7 +601,7 @@
          (pr-str {:schema :kotobase.rust-free-signed-commit-qualification/v1
                   :source "kotoba/cid_signed_commit.kotoba"
                   :expected-signed-commit-cid
-                  "bafyreidmcqtvhsr5aj4nxxvjvvrygaretdzmqfa2m73hlazxgevc3pdpva"
+                  "bafyreidl4mgsqduk46zwsrbuftgibtpmbwlj3c3o4a2il6y477mnty2jim"
                   :wasm wasm :native native
                   :fixed-vector-full-layer-replay-qualified true
                   :generalized-cid-graph-replay-qualified false})))

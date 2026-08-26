@@ -119,17 +119,24 @@
        (wire-assert-hex "e2" ":name" "Bob")
        (wire-assert-hex "e1" ":status" "branch-b")))))
 
-(defn- novelty-block-hex
-  [transaction-digest :string previous-novelty-digest :string]
+(defn- novelty-set-block-hex
+  [step :i64 tx-one :string tx-two :string tx-three :string]
   :string
-  (string-concat
-   "a26165"
-   (string-concat
-    (dag-link-from-digest transaction-digest)
-    (string-concat "6472657374"
-                   (if (string=? previous-novelty-digest "")
-                     "f6"
-                     (dag-link-from-digest previous-novelty-digest))))))
+  ;; Profile 6 stores novelty as an immutable Merkle-LSM entry set. For this
+  ;; bounded three-transaction fixture, newest entries are prepended and each
+  ;; entry is the canonical map {"e": <transaction CID>}.
+  (let [entry-one (string-concat "a16165" (dag-link-from-digest tx-one))
+        entry-two (string-concat "a16165" (dag-link-from-digest tx-two))
+        entry-three (string-concat "a16165" (dag-link-from-digest tx-three))]
+    (string-concat
+     (if (= step 1) "a262657381"
+       (if (= step 2) "a262657382" "a262657383"))
+     (string-concat
+      (if (= step 1) entry-one
+        (if (= step 2)
+          (string-concat entry-two entry-one)
+          (string-concat entry-three (string-concat entry-two entry-one))))
+      "6472657374f6"))))
 
 (defn- chain-block-hex
   [sequence :i64 previous-chain-digest :string novelty-digest :string]
@@ -155,13 +162,16 @@
 
 (defn- replay-state-digest [] :string
   (let [tx-one (sha256-digest (transaction-block-hex 1))
-        novelty-one (sha256-digest (novelty-block-hex tx-one ""))
-        chain-one (sha256-digest (chain-block-hex 0 "" novelty-one))
         tx-two (sha256-digest (transaction-block-hex 2))
-        novelty-two (sha256-digest (novelty-block-hex tx-two novelty-one))
-        chain-two (sha256-digest (chain-block-hex 1 chain-one novelty-two))
         tx-three (sha256-digest (transaction-block-hex 3))
-        novelty-three (sha256-digest (novelty-block-hex tx-three novelty-two))]
+        novelty-one (sha256-digest
+                     (novelty-set-block-hex 1 tx-one tx-two tx-three))
+        chain-one (sha256-digest (chain-block-hex 0 "" novelty-one))
+        novelty-two (sha256-digest
+                     (novelty-set-block-hex 2 tx-one tx-two tx-three))
+        chain-two (sha256-digest (chain-block-hex 1 chain-one novelty-two))
+        novelty-three (sha256-digest
+                       (novelty-set-block-hex 3 tx-one tx-two tx-three))]
     (sha256-digest (chain-block-hex 2 chain-two novelty-three))))
 
 (defn- replay-state-root [] :string
@@ -171,7 +181,7 @@
   ;; C3 marker reconstructed from the canonical CID-byte frontier and causal
   ;; order. Its contents are fixed only because this is the checked-in C3
   ;; conformance graph; its CID is still derived in the guest.
-  "a666736368656d61781d6b6f746f626173652e6d657267652d7472616e73616374696f6e2e76316973656d616e74696373783b62616679726569666f696d736369676d6f747071776c37616f6170636d7a786d776f7a6a787a75333765786f786861727a7636776d6e33797772756d636f6e666c6963745f72756c65783063617573616c2d6865696768742d7468656e2d6369642d62797465732d6c6173742d6f7065726174696f6e2d77696e736d73746174655f70726f66696c65776b6f746f626173652e706565722e7075626c69632e76316e62617369735f66726f6e7469657282783b62616679726569627766676d74356a736a693463737074366f783274363269797a767337646d697261356b663779683433646c3771677773686979783b62616679726569637661776f6273696961686c783261767634356b366d70716e656a72367279666471617837676676726b326872663367657a346d6f6f7264657265645f636f6d6d69747383783b6261667972656962727935336c337a6f327437746235796e357866697a3277746c736677326d6178776d32726433726177796b3373627a35683471783b62616679726569627766676d74356a736a693463737074366f783274363269797a767337646d697261356b663779683433646c3771677773686979783b62616679726569637661776f6273696961686c783261767634356b366d70716e656a72367279666471617837676676726b326872663367657a346d")
+  "a666736368656d61781d6b6f746f626173652e6d657267652d7472616e73616374696f6e2e76316973656d616e74696373783b62616679726569666f696d736369676d6f747071776c37616f6170636d7a786d776f7a6a787a75333765786f786861727a7636776d6e33797772756d636f6e666c6963745f72756c65783063617573616c2d6865696768742d7468656e2d6369642d62797465732d6c6173742d6f7065726174696f6e2d77696e736d73746174655f70726f66696c65776b6f746f626173652e706565722e7075626c69632e76316e62617369735f66726f6e7469657282783b626166797265696167337978336661326f7a6d3236766e696135367a626a676e6b62646572336f6b67617a76686563757777756171746537793765783b62616679726569647568676370336c697a326f3236637835716b32336873376f7078707179757333376b7a6f7674677769677637706e6734676f696f6f7264657265645f636f6d6d69747383783b62616679726569687678777a777578656e346f357a326d346934686e366871726467696b7a757174666c6e356876326d3377663637636f366a7875783b626166797265696167337978336661326f7a6d3236766e696135367a626a676e6b62646572336f6b67617a76686563757777756171746537793765783b62616679726569647568676370336c697a326f3236637835716b32336873376f7078707179757333376b7a6f7674677769677637706e6734676f69")
 
 (defn- payload-hex [] :string
   ;; The fixed fixture's UTF-8 text atoms are pre-encoded. Map/array structure
@@ -181,16 +191,16 @@
         author "78386469643a6b65793a7a364d6b6e654d6b5a717771526955356d4a7a5347336b44777a743950384335394e344e475466424c66534745376337"
         schema "781a6b6f746f626173652e636f6d6d69742d7061796c6f61642e7631"
         db-name "6b636f6e666f726d616e6365"
-        parent-a "783b62616679726569627766676d74356a736a693463737074366f783274363269797a767337646d697261356b663779683433646c3771677773686979"
-        parent-b "783b62616679726569637661776f6273696961686c783261767634356b366d70716e656a72367279666471617837676676726b326872663367657a346d"
+        parent-a "783b626166797265696167337978336661326f7a6d3236766e696135367a626a676e6b62646572336f6b67617a76686563757777756171746537793765"
+        parent-b "783b62616679726569647568676370336c697a326f3236637835716b32336873376f7078707179757333376b7a6f7674677769677637706e6734676f69"
         parents (string-concat "82" (string-concat parent-a parent-b))
         semantics "783b62616679726569666f696d736369676d6f747071776c37616f6170636d7a786d776f7a6a787a75333765786f786861727a7636776d6e3379777275"
         ;; These two atoms are independently re-derived by check-state-root
         ;; and check-merge-transaction-cid. Keeping the layer boundary here
         ;; lets the standard fixed native arena qualify every layer without
         ;; weakening its allocation limits merely for one monolithic call.
-        state-root "783b62616679726569676c7165363474706935666967343378626d3366657175656332713533746a6b327362336d6b6f6f78656a62367271616d796565"
-        transaction "783b62616679726569656479656f626363636e6173687168326a74766d617575706c616f636261326f376f6d6672786a67366f6177686e6b3573793565"
+        state-root "783b6261667972656966766d64376e377970366b6c706e6474786f636e647a3267346373693434716b6b64353572636a77713337617a74646866356d61"
+        transaction "783b626166797265696771623569707174756865723470686669746c73736262796267757371616a3763676e326632376165747a357662627a75336771"
         state-profile "776b6f746f626173652e706565722e7075626c69632e7631"]
     (string-concat
      "a9"
@@ -300,29 +310,29 @@
 
 (defn check-payload-cid [] :i64
   (if (string=? (sha256-cid (payload-hex))
-                "bafyreihrxdtdgpgvhenlgbg5j67ykmnfey72u3xo42kn2eabo3efhl6roe")
+                "bafyreibrm4eo5wvr77b563vukvvncyvue7sokxpmfoml66ydamegas6nti")
     1 0))
 
 (defn check-state-root [] :i64
   (if (string=? (replay-state-root)
-                "bafyreiglqe64tpi5fig43xbm3fequec2q53tjk2sb3mkooxejb6rqamyee")
+                "bafyreifvmd7n7yp6klpndtxocndz2g4csi44qkkd55rcjwq37aztdhf5ma")
     1 0))
 
 (defn check-merge-transaction-cid [] :i64
   (if (string=? (sha256-cid (merge-transaction-hex))
-                "bafyreiedyeobcccnashqh2jtvmauuplaocba2o7omfrxjg6oawhnk5sy5e")
+                "bafyreigqb5ipqtuher4phfitlssbbybgusqaj7cgn2f27aetz5vbbzu3gq")
     1 0))
 
 (defn check-payload-digest [] :i64
   (if (string=?
        (typed-cap-call :hash/sha256 :string :string
                        (string-concat "hex:" (payload-hex)))
-       "f1b8e6333cd5391ab304dd4fbf8531a5263faa6eeee694dd100176c853afd171")
+       "316708eedab1ffc3df6eb4556ad162b427e4e55dec2b98bf7b030308604bcd9a")
     1 0))
 
 (defn check-signed-cid [] :i64
   (if (string=? (sha256-cid (signed-envelope-hex))
-                "bafyreidmcqtvhsr5aj4nxxvjvvrygaretdzmqfa2m73hlazxgevc3pdpva")
+                "bafyreidl4mgsqduk46zwsrbuftgibtpmbwlj3c3o4a2il6y477mnty2jim")
     1 0))
 
 (defn main [] :i64
