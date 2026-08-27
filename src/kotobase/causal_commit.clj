@@ -25,7 +25,7 @@
 (def ^:private index-attribute "kotobase.causal/index")
 (def ^:private payload-attribute "kotobase.causal/payload-edn")
 
-(def ^:private forbidden-secret-keys
+(def ^:private forbidden-field-keys
   #{:credential/raw :evidence/raw :identity.evidence/raw
     :secret/raw :authentication/token
     "credential/raw" "evidence/raw" "identity.evidence/raw"
@@ -38,13 +38,13 @@
   (throw (ex-info "canonical causal commit rejected"
                   (assoc data :kotobase.causal-commit/reason reason))))
 
-(defn- contains-secret-slot? [value]
+(defn- contains-forbidden-field? [value]
   (cond
     (map? value)
-    (or (some forbidden-secret-keys (keys value))
-        (some contains-secret-slot? (vals value)))
+    (or (some forbidden-field-keys (keys value))
+        (some contains-forbidden-field? (vals value)))
 
-    (coll? value) (some contains-secret-slot? value)
+    (coll? value) (some contains-forbidden-field? value)
     :else false))
 
 (defn- canonical-order [left right]
@@ -70,7 +70,7 @@
 (defn- encode-record [record]
   (when-not (map? record)
     (reject! :invalid-record {:record record}))
-  (when (contains-secret-slot? record)
+  (when (contains-forbidden-field? record)
     (reject! :raw-secret-slot {:record-keys (set (keys record))}))
   (pr-str (canonical-value record)))
 
