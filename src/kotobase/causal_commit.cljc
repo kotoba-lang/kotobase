@@ -5,7 +5,8 @@
   CID. No mutable ref is read or published. Concurrent writers therefore form
   explicit branches, while `receipt-at` replays and verifies one exact branch.
   Raw credentials and identity evidence are outside this projection."
-  (:require [clojure.edn :as edn]
+  (:require #?(:clj [clojure.edn :as edn]
+               :cljs [cljs.reader :as edn])
             [grant.causal-trust :as trust]
             [identity.adapters.ledger :as identity-ledger]
             [kotobase.causal-trust :as compatibility]
@@ -30,6 +31,27 @@
     :secret/raw :authentication/token
     "credential/raw" "evidence/raw" "identity.evidence/raw"
     "secret/raw" "authentication/token"})
+
+(def ^:private immediate-runtime
+  {:then (fn [value f] (f value))
+   :all (fn [values] (vec values))})
+
+#?(:cljs
+   (def ^:private promise-runtime
+     {:then (fn [value f] (.then (js/Promise.resolve value) f))
+      :all (fn [values]
+             (-> (js/Promise.all (clj->js (vec values)))
+                 (.then #(vec (array-seq %)))))}))
+
+(def ^:private completion-runtime
+  #?(:clj immediate-runtime
+     :cljs promise-runtime))
+
+(defn- then [value f]
+  ((:then completion-runtime) value f))
+
+(defn- all [values]
+  ((:all completion-runtime) values))
 
 (defn- non-empty-string? [value]
   (and (string? value) (seq value)))
@@ -93,13 +115,48 @@
          records)))
 
 (defn- entity-at [snapshot entity-id]
-  (reduce
-   (fn [entity {:keys [p o]}]
-     (when (contains? entity p)
-       (reject! :duplicate-attribute {:entity entity-id :attribute p}))
-     (assoc entity p o))
-   {}
-   (core/q snapshot [entity-id nil nil])))
+  (then
+   (core/q snapshot [entity-id nil nil])
+   (fn [rows]
+     (reduce
+      (fn [entity {:keys [p o]}]
+        (when (contains? entity p)
+          (reject! :duplicate-attribute {:entity entity-id :attribute p}))
+        (assoc entity p o))
+      {}
+      rows))))
+
+(defn- decode-record [snapshot stream receipt-id entity-id]
+  (then
+   (entity-at snapshot entity-id)
+   (fn [record]
+     (let [index (some-> (get record index-attribute) parse-long)]
+       (when-not (and (= receipt-id (get record receipt-attribute))
+                      (= stream (get record stream-attribute))
+                      (some? index)
+                      (non-empty-string? (get record payload-attribute)))
+         (reject! :invalid-record-envelope {:entity entity-id}))
+       {:index index
+        :payload (edn/read-string (get record payload-attribute))}))))
+
+(defn- verified-receipt
+  [commit-cid receipt-id stream encoded-basis expected-count decoded]
+  (let [decoded (->> decoded (sort-by :index) vec)
+        indexes (mapv :index decoded)]
+    (when-not (and (non-empty-string? stream)
+                   (non-empty-string? encoded-basis)
+                   (nat-int? expected-count)
+                   (= expected-count (count decoded))
+                   (= (vec (range expected-count)) indexes)
+                   (every? map? (map :payload decoded)))
+      (reject! :incomplete-or-reordered-records
+               {:expected-count expected-count :indexes indexes}))
+    {:receipt/id receipt-id
+     :receipt/commit-cid commit-cid
+     :receipt/basis-cid (when-not (= genesis-basis encoded-basis)
+                          encoded-basis)
+     :receipt/stream stream
+     :receipt/records (mapv :payload decoded)}))
 
 (defn receipt-at
   "Read and verify RECEIPT-ID from exactly COMMIT-CID.
@@ -111,54 +168,28 @@
   (when-not (and (non-empty-string? commit-cid)
                  (non-empty-string? receipt-id))
     (reject! :invalid-receipt-location {}))
-  (let [snapshot (core/at-cid database commit-cid)
-        header (entity-at snapshot receipt-id)]
-    (when-not (= format-version (get header format-attribute))
-      (reject! :receipt-not-found-or-invalid
-               {:commit-cid commit-cid :receipt-id receipt-id}))
-    (let [stream (get header stream-attribute)
-          encoded-basis (get header basis-attribute)
-          expected-count (some-> (get header record-count-attribute)
-                                 parse-long)
-          record-ids (->> (core/q snapshot [nil receipt-attribute receipt-id])
-                          (map :s)
-                          sort
-                          vec)
-          decoded
-          (->> record-ids
-               (map (fn [entity-id]
-                      (let [record (entity-at snapshot entity-id)
-                            index (some-> (get record index-attribute)
-                                          parse-long)]
-                        (when-not (and (= receipt-id
-                                          (get record receipt-attribute))
-                                       (= stream (get record stream-attribute))
-                                       (some? index)
-                                       (non-empty-string?
-                                        (get record payload-attribute)))
-                          (reject! :invalid-record-envelope
-                                   {:entity entity-id}))
-                        {:index index
-                         :payload (edn/read-string
-                                   (get record payload-attribute))})))
-               (sort-by :index)
-               vec)
-          indexes (mapv :index decoded)]
-      (when-not (and (non-empty-string? stream)
-                     (non-empty-string? encoded-basis)
-                     (nat-int? expected-count)
-                     (= expected-count (count decoded))
-                     (= (vec (range expected-count)) indexes)
-                     (every? map? (map :payload decoded)))
-        (reject! :incomplete-or-reordered-records
-                 {:expected-count expected-count
-                  :indexes indexes}))
-      {:receipt/id receipt-id
-       :receipt/commit-cid commit-cid
-       :receipt/basis-cid (when-not (= genesis-basis encoded-basis)
-                            encoded-basis)
-       :receipt/stream stream
-       :receipt/records (mapv :payload decoded)})))
+  (then
+   (core/at-cid database commit-cid)
+   (fn [snapshot]
+     (then
+      (entity-at snapshot receipt-id)
+      (fn [header]
+        (when-not (= format-version (get header format-attribute))
+          (reject! :receipt-not-found-or-invalid
+                   {:commit-cid commit-cid :receipt-id receipt-id}))
+        (let [stream (get header stream-attribute)
+              encoded-basis (get header basis-attribute)
+              expected-count (some-> (get header record-count-attribute)
+                                     parse-long)]
+          (then
+           (core/q snapshot [nil receipt-attribute receipt-id])
+           (fn [record-links]
+             (let [record-ids (->> record-links (map :s) sort vec)]
+               (then
+                (all (mapv #(decode-record snapshot stream receipt-id %)
+                           record-ids))
+                #(verified-receipt commit-cid receipt-id stream encoded-basis
+                                   expected-count %)))))))))))
 
 (defn- commit-records!
   [database stream receipt-id expected-basis records]
@@ -170,23 +201,27 @@
     (reject! :invalid-expected-basis {}))
   (when-not (and (vector? records) (seq records) (every? map? records))
     (reject! :invalid-records {}))
-  (let [commit-cid (core/commit-at!
-                    database expected-basis
-                    (transaction-data stream receipt-id expected-basis records))
-        proof (receipt-at database commit-cid receipt-id)]
-    (when-not (= {:receipt/basis-cid expected-basis
-                  :receipt/stream stream
-                  :receipt/records records}
-                 (select-keys proof [:receipt/basis-cid
-                                     :receipt/stream
-                                     :receipt/records]))
-      (reject! :write-proof-mismatch {:proof proof}))
-    {:receipt/durable? true
-     :receipt/cid receipt-id
-     :receipt/commit-cid commit-cid
-     :receipt/basis-cid expected-basis
-     :receipt/record-count (count records)
-     :receipt/route :canonical-cid-dag}))
+  (then
+   (core/commit-at!
+    database expected-basis
+    (transaction-data stream receipt-id expected-basis records))
+   (fn [commit-cid]
+     (then
+      (receipt-at database commit-cid receipt-id)
+      (fn [proof]
+        (when-not (= {:receipt/basis-cid expected-basis
+                      :receipt/stream stream
+                      :receipt/records records}
+                     (select-keys proof [:receipt/basis-cid
+                                         :receipt/stream
+                                         :receipt/records]))
+          (reject! :write-proof-mismatch {:proof proof}))
+        {:receipt/durable? true
+         :receipt/cid receipt-id
+         :receipt/commit-cid commit-cid
+         :receipt/basis-cid expected-basis
+         :receipt/record-count (count records)
+         :receipt/route :canonical-cid-dag})))))
 
 (defn identity-ledger
   "Adapt canonical Kotobase commits to identity's atomic ledger contract.
@@ -240,6 +275,7 @@
   "Admit and evaluate at one basis, then commit the receipt before rows return."
   [{:keys [database disclosure] :as request}]
   (compatibility/require-query-capability! request)
-  (guarded/read!
+  (#?(:clj guarded/read!
+      :cljs guarded/read-async!)
    (assoc (dissoc request :database :disclosure :receipt!)
           :receipt! (disclosure-receipt-sink database disclosure))))

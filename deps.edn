@@ -17,6 +17,14 @@
         io.github.kotoba-lang/grant
         {:git/url "https://github.com/kotoba-lang/grant.git"
          :git/sha "9d7d11fc3d77b1f6dfcbcd6fa9dd7d83e6b8bf98"}
+        ;; The transitive arrangement/prolly path still names eec3ee8, whose
+        ;; reader-conditional ns form is not valid under the real
+        ;; ClojureScript compiler. Keep the Worker build on the fleet's
+        ;; qualified io-multiformats pin; this is a direct compile boundary,
+        ;; not a second implementation of CID primitives.
+        io.github.kotoba-lang/io-multiformats
+        {:git/url "https://github.com/kotoba-lang/io-multiformats.git"
+         :git/sha "c5963264a8da78ece878b04da18225abdbb84457"}
         ;; kotobase.core delegates to the engine, which speaks the
         ;; provider-neutral storage contract. Concrete providers (postgres, d1,
         ;; s3, ipfs, sqlite) are chosen by the host and passed in as `:storage`;
