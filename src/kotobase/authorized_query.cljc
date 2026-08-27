@@ -76,12 +76,18 @@
       ;; the same shape admission requires of its audit: a sink that says
       ;; nothing, or says it did not persist, has not recorded the read
       (when-not (and (map? ack) (true? (:receipt/durable? ack))
-                     (string? (:receipt/cid ack)) (seq (:receipt/cid ack)))
+                     (string? (:receipt/cid ack)) (seq (:receipt/cid ack))
+                     (or (nil? (:receipt/commit-cid ack))
+                         (and (string? (:receipt/commit-cid ack))
+                              (seq (:receipt/commit-cid ack)))))
         (reject! :receipt-not-durable {:ack ack}))
       {:rows rows
-       :provenance (assoc (:provenance compiled)
-                          :receipt-cid (:receipt/cid ack)
-                          :row-count (count rows))})))
+       :provenance (cond-> (assoc (:provenance compiled)
+                                  :receipt-cid (:receipt/cid ack)
+                                  :row-count (count rows))
+                     (:receipt/commit-cid ack)
+                     (assoc :receipt-commit-cid
+                            (:receipt/commit-cid ack)))})))
 
 (defn receipt-projection
   "Return the non-sensitive, immutable-fact projection a host must bind into
