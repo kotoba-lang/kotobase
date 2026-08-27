@@ -27,15 +27,8 @@
        (string? (get-in query [:scope :basis])) (seq (get-in query [:scope :basis]))
        (pos-int? (:limit query)) (<= (:limit query) max-limit)))
 
-(defn compile!
-  "Ask AUTHORIZE! to compile the guest AST at its declared immutable basis.
-  It must return an exact policy result with `:allowed?` and a set-valued
-  `:projection`; an allowed result may only narrow the requested projection."
-  [authorize! query]
-  (when-not (valid-query? query) (reject! :invalid-query {}))
-  (when-not (ifn? authorize!) (reject! :missing-authorizer {}))
-  (let [decision (authorize! query)
-        expected #{:allowed? :projection :basis :policy-cid}
+(defn- validate-decision! [query decision]
+  (let [expected #{:allowed? :projection :basis :policy-cid}
         requested (set (:find query))]
     (when-not (and (map? decision) (= expected (set (keys decision)))
                    (boolean? (:allowed? decision)) (set? (:projection decision))
@@ -51,6 +44,47 @@
      :provenance {:basis (:basis decision) :policy-cid (:policy-cid decision)
                   :tenant (get-in query [:scope :tenant])
                   :purpose (get-in query [:scope :purpose])}}))
+
+(defn compile!
+  "Ask AUTHORIZE! to compile the guest AST at its declared immutable basis.
+  It must return an exact policy result with `:allowed?` and a set-valued
+  `:projection`; an allowed result may only narrow the requested projection."
+  [authorize! query]
+  (when-not (valid-query? query) (reject! :invalid-query {}))
+  (when-not (ifn? authorize!) (reject! :missing-authorizer {}))
+  (validate-decision! query (authorize! query)))
+
+#?(:cljs
+   (defn compile-async!
+     "Promise-aware policy compilation for Worker/JavaScript authorizers.
+
+     The authorizer may be a local function or a third-party LLM/model/agent.
+     Its Promise is awaited and the same exact-basis, projection, and denial
+     checks as `compile!` run before any evaluator is called."
+     [authorize! query]
+     (try
+       (when-not (valid-query? query) (reject! :invalid-query {}))
+       (when-not (ifn? authorize!) (reject! :missing-authorizer {}))
+       (-> (js/Promise.resolve (authorize! query))
+           (.then #(validate-decision! query %)))
+       (catch :default error
+         (js/Promise.reject error)))))
+
+(defn- durable-result [compiled rows ack]
+  (when-not (vector? rows) (reject! :invalid-result {}))
+  (when-not (and (map? ack) (true? (:receipt/durable? ack))
+                 (string? (:receipt/cid ack)) (seq (:receipt/cid ack))
+                 (or (nil? (:receipt/commit-cid ack))
+                     (and (string? (:receipt/commit-cid ack))
+                          (seq (:receipt/commit-cid ack)))))
+    (reject! :receipt-not-durable {:ack ack}))
+  {:rows rows
+   :provenance (cond-> (assoc (:provenance compiled)
+                              :receipt-cid (:receipt/cid ack)
+                              :row-count (count rows))
+                 (:receipt/commit-cid ack)
+                 (assoc :receipt-commit-cid
+                        (:receipt/commit-cid ack)))})
 
 (defn execute!
   "Execute only a compiled query through EVALUATE!, and record that it ran.
@@ -72,22 +106,32 @@
   (when-not (ifn? receipt!) (reject! :missing-receipt-sink {}))
   (let [rows (evaluate! (:query compiled) (:decision compiled))]
     (when-not (vector? rows) (reject! :invalid-result {}))
-    (let [ack (receipt! {:compiled compiled :row-count (count rows)})]
-      ;; the same shape admission requires of its audit: a sink that says
-      ;; nothing, or says it did not persist, has not recorded the read
-      (when-not (and (map? ack) (true? (:receipt/durable? ack))
-                     (string? (:receipt/cid ack)) (seq (:receipt/cid ack))
-                     (or (nil? (:receipt/commit-cid ack))
-                         (and (string? (:receipt/commit-cid ack))
-                              (seq (:receipt/commit-cid ack)))))
-        (reject! :receipt-not-durable {:ack ack}))
-      {:rows rows
-       :provenance (cond-> (assoc (:provenance compiled)
-                                  :receipt-cid (:receipt/cid ack)
-                                  :row-count (count rows))
-                     (:receipt/commit-cid ack)
-                     (assoc :receipt-commit-cid
-                            (:receipt/commit-cid ack)))})))
+    (durable-result compiled rows
+                    (receipt! {:compiled compiled :row-count (count rows)}))))
+
+#?(:cljs
+   (defn execute-async!
+     "Promise-aware protected execution for Worker/JavaScript hosts.
+
+     Rows are withheld until both the evaluator and the durable receipt sink
+     resolve successfully."
+     [evaluate! receipt! compiled]
+     (try
+       (when-not (and (map? compiled)
+                      (= #{:query :decision :provenance} (set (keys compiled))))
+         (reject! :invalid-compiled-query {}))
+       (when-not (ifn? evaluate!) (reject! :missing-evaluator {}))
+       (when-not (ifn? receipt!) (reject! :missing-receipt-sink {}))
+       (-> (js/Promise.resolve
+            (evaluate! (:query compiled) (:decision compiled)))
+           (.then
+            (fn [rows]
+              (when-not (vector? rows) (reject! :invalid-result {}))
+              (-> (js/Promise.resolve
+                   (receipt! {:compiled compiled :row-count (count rows)}))
+                  (.then #(durable-result compiled rows %))))))
+       (catch :default error
+         (js/Promise.reject error)))))
 
 (defn receipt-projection
   "Return the non-sensitive, immutable-fact projection a host must bind into

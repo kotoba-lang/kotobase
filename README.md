@@ -14,14 +14,14 @@ remain compatibility and migration surfaces only. See
 The document/stream `kotobase.store/IStore` section below is a legacy
 compatibility surface; new database backends must not target it.
 
-`kotobase.causal-trust` is the first protected causal-identity adapter on the
-compatibility `ITransactionalStore` seam. It atomically persists an epoch
-transition with its successor epoch, and it routes protected reads through a
-causal disclosure receipt. Rows are withheld until that receipt is durably
-committed. The permanent projection contains attributed records, decision
-bases, and content addresses—not raw identity evidence or credentials.
-Promotion of this adapter to the canonical CID commit DAG remains a separate
-migration gate.
+`kotobase.causal-commit` is the canonical causal-identity adapter. It commits
+identity transitions, LLM/model/agent decisions, and protected-read receipts
+against an exact immutable basis CID without consulting or publishing a
+mutable ref. Rows are withheld until the receipt commit is durably written and
+reread by its returned CID. The permanent projection contains attributed
+records, decision bases, and content addresses—not raw identity evidence or
+credentials. `kotobase.causal-trust` remains the explicitly named numeric-
+revision compatibility route; the two basis types are never translated.
 
 **The datom database of the kotoba stack.** kotobase persists, indexes,
 queries, and time-versions the datom model that the
@@ -315,6 +315,14 @@ Use `promise-runtime` in ClojureScript; other completion models can inject the
 same `resolve`/`then`/`all` algebra. CI compiles and executes this path under
 Node as real ClojureScript rather than relying only on the synchronous JVM test.
 
+`kotobase.causal-commit`, `kotobase.guarded`, and
+`kotobase.authorized-query` also have a real Worker completion path. A remote
+LLM/model/agent authorizer, the query evaluator, every immutable block write,
+the exact-CID reread, and the receipt sink are awaited in order. Any rejection
+withholds the rows. The same public `causal-commit/read!`, `receipt-at`, and
+ledger adapter remain synchronous on the JVM and Promise-returning in
+ClojureScript.
+
 ## Comparing this shape with OrbitDB / Ceramic / ActorDB
 
 [`capability-bench/`](capability-bench/) implements the OrbitDB
@@ -360,5 +368,6 @@ Workers) inject a `fetch`-based `xrpc` and serve the app API straight off the
 
 ```bash
 clojure -M:test     # LocalStore + KotobaseStore both satisfy the IStore contract
-clojure -M:cljs-test -m cljs.main ... # compile/run Promise IStore code graph
+clojure -M:cljs-test -m cljs.main -co '{:target :nodejs :output-to "target/p2-tests.js" :output-dir "target/p2-out" :optimizations :none :main kotobase.async-test-runner}' -c kotobase.async-test-runner
+node target/p2-tests.js              # real Promise causal-commit/guarded path
 ```

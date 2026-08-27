@@ -160,6 +160,12 @@ nor publishes a mutable ref. The returned CID is reread through `at-cid` before
 the write is acknowledged. Protected rows carry both the causal receipt CID
 and the Kotobase commit CID that makes the receipt auditable.
 
+On ClojureScript/Workers the policy compiler may be a remote LLM, model, or
+agent. Its Promise, the evaluator Promise, every provider write, the exact-CID
+reread, and the receipt-sink Promise are all awaited. A failure at any stage
+rejects the operation and protected rows are not returned. The JVM uses the
+same validation and record format synchronously.
+
 `kotobase.causal-trust` remains the explicitly named compatibility route for
 existing `ITransactionalStore` consumers. Its numeric revision is not a
 canonical basis and must not be translated into, compared with, or presented

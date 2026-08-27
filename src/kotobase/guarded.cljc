@@ -59,6 +59,30 @@
      :projection projection
      :inline (classification/inline-attributes schema)}))
 
+#?(:cljs
+   (defn admit-async
+     "Promise-aware admission for Worker/JavaScript policy agents."
+     [{:keys [authorize! schema grant query]}]
+     (try
+       (when-not (map? schema) (reject! :missing-schema {}))
+       (when-not (classification/classified? schema)
+         (reject! :schema-not-fully-classified
+                  {:errors (filterv #(= :unclassified-attribute (:error %))
+                                    (classification/schema-errors schema))}))
+       (when-not (map? grant) (reject! :missing-grant {}))
+       (-> (gate/compile-async! authorize! query)
+           (.then
+            (fn [compiled]
+              (let [projection (get-in compiled [:decision :projection])
+                    errors (classification/projection-errors schema projection grant)]
+                (when (seq errors)
+                  (reject! :projection-outside-grant {:errors errors}))
+                {:compiled compiled
+                 :projection projection
+                 :inline (classification/inline-attributes schema)}))))
+       (catch :default error
+         (js/Promise.reject error)))))
+
 (defn read!
   "Admit, evaluate, and record. There is no arity that skips any of the three.
 
@@ -75,6 +99,25 @@
            ;; hash and reported it as content
            :inline (into (sorted-set) (filter inline projection))
            :by-reference (into (sorted-set) (remove inline projection)))))
+
+#?(:cljs
+   (defn read-async!
+     "Admit through an async policy agent, evaluate, and durably receipt.
+
+     Every Promise is returned or awaited; the Worker may not return rows
+     while policy, evaluation, or receipt persistence remains in flight."
+     [{:keys [evaluate! receipt!] :as request}]
+     (-> (admit-async request)
+         (.then
+          (fn [{:keys [compiled inline projection]}]
+            (-> (gate/execute-async! evaluate! receipt! compiled)
+                (.then
+                 (fn [result]
+                   (assoc result
+                          :projection projection
+                          :inline (into (sorted-set) (filter inline projection))
+                          :by-reference
+                          (into (sorted-set) (remove inline projection)))))))))))
 
 (def unguarded-read-fns
   "The read surface of `kotobase.core`, which is unguarded by design.
