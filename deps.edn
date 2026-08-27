@@ -23,10 +23,10 @@
         ;; none of them are dependencies here.
         io.github.kotoba-lang/kotobase-storage
         {:git/url "https://github.com/kotoba-lang/kotobase-storage.git"
-         :git/sha "5cbf6c5107ad49c0daac14dca118c837053de0d6"}
+         :git/sha "e52ddaad020e7d9f790a1839cf77e69f97ff731e"}
         io.github.kotoba-lang/kotobase-engine
         {:git/url "https://github.com/kotoba-lang/kotobase-engine.git"
-         :git/sha "bdc057bef0bc88b289f6f24e086a50884ee363c4"}}
+         :git/sha "6fc88d2f3142e5fef42085a26233bd032c039760"}}
  :aliases
  {:cljs-test {:extra-paths ["test"]
               :extra-deps {org.clojure/clojurescript {:mvn/version "1.11.132"}}}

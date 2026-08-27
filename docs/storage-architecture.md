@@ -151,6 +151,24 @@ as a compatibility surface for existing murakumo/manimani consumers. New
 database backends must not implement or depend on it. It will move to a
 dedicated compatibility package after downstream consumers migrate.
 
+### Causal trust migration boundary
+
+`kotobase.causal-commit` is the canonical route for new identity transitions,
+LLM-attributed authority decisions, and protected-read receipts. A write names
+an exact immutable basis CID and returns a new commit CID; it neither consults
+nor publishes a mutable ref. The returned CID is reread through `at-cid` before
+the write is acknowledged. Protected rows carry both the causal receipt CID
+and the Kotobase commit CID that makes the receipt auditable.
+
+`kotobase.causal-trust` remains the explicitly named compatibility route for
+existing `ITransactionalStore` consumers. Its numeric revision is not a
+canonical basis and must not be translated into, compared with, or presented
+as a Kotobase commit CID. Migration is new-write-first: old events remain
+readable through the compatibility API, while a consumer changes its write
+path to `causal-commit` and retains the returned commit CID. No bulk rewrite is
+implied, and copying a legacy event into a CID commit without preserving its
+original attribution would create a new record rather than repair history.
+
 Provider repositories:
 
 - `kotobase-storage-postgres`

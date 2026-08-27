@@ -4,7 +4,10 @@
 
 (defn open [options] (engine/open options))
 (defn head [database] (engine/head database))
+(defn at-cid [database commit-cid] (engine/at-cid database commit-cid))
 (defn transact! [database tx-data] (engine/transact! database tx-data))
+(defn commit-at! [database expected-basis tx-data]
+  (engine/commit-at! database expected-basis tx-data))
 (defn datoms
   ([database] (engine/datoms database))
   ([database options] (engine/datoms database options)))

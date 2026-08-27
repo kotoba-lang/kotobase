@@ -110,7 +110,7 @@
                                      sym))
                                  (ns-publics 'kotobase.core)))
         reads guarded/unguarded-read-fns
-        writes '#{open transact!}]
+        writes '#{open transact! commit-at!}]
     (is (= (into reads writes) core-fns)
         (str "kotobase.core's public surface changed: " core-fns
              ". A new read fn has to be declared unguarded or routed through "

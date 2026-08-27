@@ -83,4 +83,4 @@
   something a reader has to infer. A caller reaching for one of these is
   choosing to read without a policy, a grant, or a receipt, and that choice
   should be visible in review."
-  '#{datoms q query pull head})
+  '#{at-cid datoms q query pull head})

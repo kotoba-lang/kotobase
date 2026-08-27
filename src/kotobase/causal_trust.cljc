@@ -1,10 +1,10 @@
 (ns kotobase.causal-trust
   "Durable Kotobase projection for causal identity and authority receipts.
 
-  The permanent surface stores attributed records and CIDs, not raw identity
-  evidence. Both identity transitions and protected-read receipts require the
-  transactional store extension: a partial transition or a read returned
-  without its audit record is not an acceptable state."
+  This namespace is the temporary `ITransactionalStore` compatibility route.
+  It stores attributed records and CIDs, not raw identity evidence. New causal
+  persistence uses `kotobase.causal-commit`, whose basis and acknowledgement
+  are immutable Kotobase commit CIDs."
   (:require [grant.causal-trust :as trust]
             [identity.adapters.ledger :as identity-ledger]
             [kotobase.guarded :as guarded]
@@ -98,17 +98,12 @@
     :causal.receipt/basis-cid :causal.receipt/claim-cids
     :causal.receipt/decision})
 
-(defn disclosure-receipt-sink
-  "Build the only receipt sink accepted by `read!`.
+(defn disclosure-plan
+  "Validate the authority bindings before a protected query is evaluated.
 
-  The host supplies a canonical CID function. The sink binds the guarded-query
-  provenance and row count into the same epoch, policy, basis, and evaluator
-  claims as the authority decision before making one durable append."
-  [backend {:keys [template expected-revision receipt-cid-fn at] :as disclosure}]
-  (require-transactional! backend)
-  (when-not (= #{:template :expected-revision :receipt-cid-fn :at}
-               (set (keys disclosure)))
-    (reject! :invalid-disclosure-options {}))
+  The returned plan is persistence-neutral and is shared by the legacy
+  transactional-store sink and the canonical CID commit sink."
+  [template receipt-cid-fn at]
   (when-not (and (map? template)
                  (= disclosure-template-keys (set (keys template))))
     (reject! :invalid-disclosure-template {}))
@@ -121,46 +116,65 @@
                         :decision/runtime-capability-spec
                         :capability/principal]))
     (reject! :principal-decision-mismatch {}))
-  (when-not (and (integer? expected-revision)
-                 (not (neg? expected-revision)))
-    (reject! :invalid-expected-revision {}))
   (when-not (ifn? receipt-cid-fn)
     (reject! :missing-receipt-cid-function {}))
   (when-not (non-empty-string? at)
     (reject! :invalid-receipt-time {}))
-  ;; Validate all epoch, claim, policy, intent, basis, and principal bindings
-  ;; before query evaluation. The real outcome and CID are filled only after
-  ;; the evaluator reports the row count.
   (trust/receipt
    (assoc template
           :causal.receipt/id "urn:kotobase:receipt:preflight"
           :causal.receipt/outcome {:outcome/status :pending}
           :causal.receipt/at at))
-  (fn [{:keys [compiled row-count] :as execution}]
-    (when-not (= #{:compiled :row-count} (set (keys execution)))
-      (reject! :invalid-read-execution {}))
-    (when-not (and (integer? row-count) (not (neg? row-count)))
-      (reject! :invalid-row-count {}))
-    (let [provenance (:provenance compiled)]
-      (when-not (= (:causal.receipt/basis-cid template)
-                   (:basis provenance))
-        (reject! :query-basis-mismatch {}))
-      (when-not (= (:causal.receipt/policy-cid template)
-                   (:policy-cid provenance))
-        (reject! :query-policy-mismatch {})))
-    (let [without-id (assoc template
-                            :causal.receipt/outcome
-                            {:outcome/status :disclosed
-                             :outcome/row-count row-count}
-                            :causal.receipt/at at)
-          receipt-cid (receipt-cid-fn without-id)]
-      (when-not (non-empty-string? receipt-cid)
-        (reject! :invalid-receipt-cid {}))
+  {:template template :receipt-cid-fn receipt-cid-fn :at at})
+
+(defn disclosure-receipt
+  "Bind an evaluated row count to a validated disclosure plan."
+  [{:keys [template receipt-cid-fn at] :as plan}
+   {:keys [compiled row-count] :as execution}]
+  (when-not (= #{:template :receipt-cid-fn :at} (set (keys plan)))
+    (reject! :invalid-disclosure-plan {}))
+  (when-not (= #{:compiled :row-count} (set (keys execution)))
+    (reject! :invalid-read-execution {}))
+  (when-not (and (integer? row-count) (not (neg? row-count)))
+    (reject! :invalid-row-count {}))
+  (let [provenance (:provenance compiled)]
+    (when-not (= (:causal.receipt/basis-cid template)
+                 (:basis provenance))
+      (reject! :query-basis-mismatch {}))
+    (when-not (= (:causal.receipt/policy-cid template)
+                 (:policy-cid provenance))
+      (reject! :query-policy-mismatch {})))
+  (let [without-id (assoc template
+                          :causal.receipt/outcome
+                          {:outcome/status :disclosed
+                           :outcome/row-count row-count}
+                          :causal.receipt/at at)
+        receipt-cid (receipt-cid-fn without-id)]
+    (when-not (non-empty-string? receipt-cid)
+      (reject! :invalid-receipt-cid {}))
+    (trust/receipt (assoc without-id :causal.receipt/id receipt-cid))))
+
+(defn disclosure-receipt-sink
+  "Build the only receipt sink accepted by `read!`.
+
+  The host supplies a canonical CID function. The sink binds the guarded-query
+  provenance and row count into the same epoch, policy, basis, and evaluator
+  claims as the authority decision before making one durable append."
+  [backend {:keys [template expected-revision receipt-cid-fn at] :as disclosure}]
+  (require-transactional! backend)
+  (when-not (= #{:template :expected-revision :receipt-cid-fn :at}
+               (set (keys disclosure)))
+    (reject! :invalid-disclosure-options {}))
+  (when-not (and (integer? expected-revision)
+                 (not (neg? expected-revision)))
+    (reject! :invalid-expected-revision {}))
+  (let [plan (disclosure-plan template receipt-cid-fn at)]
+    (fn [execution]
       (persist-decision! backend
-                         (assoc without-id :causal.receipt/id receipt-cid)
+                         (disclosure-receipt plan execution)
                          expected-revision))))
 
-(defn- require-query-capability! [request]
+(defn require-query-capability! [request]
   (let [query (:query request)
         capability (get-in request
                            [:disclosure :template :causal.receipt/decision
