@@ -14,6 +14,15 @@ remain compatibility and migration surfaces only. See
 The document/stream `kotobase.store/IStore` section below is a legacy
 compatibility surface; new database backends must not target it.
 
+`kotobase.causal-trust` is the first protected causal-identity adapter on the
+compatibility `ITransactionalStore` seam. It atomically persists an epoch
+transition with its successor epoch, and it routes protected reads through a
+causal disclosure receipt. Rows are withheld until that receipt is durably
+committed. The permanent projection contains attributed records, decision
+bases, and content addresses—not raw identity evidence or credentials.
+Promotion of this adapter to the canonical CID commit DAG remains a separate
+migration gate.
+
 **The datom database of the kotoba stack.** kotobase persists, indexes,
 queries, and time-versions the datom model that the
 [**`kotoba`**](https://github.com/kotoba-lang/kotoba) language defines
