@@ -11,9 +11,7 @@
     "bench:descent": "nbb --classpath \"$(nbb setup.cljs --print-classpath)\" run-descent.cljs",
     "bench:lake-chunk": "nbb --classpath \"$(nbb setup.cljs --print-classpath)\" run-lake-chunk.cljs"
   },
-  "dependencies": {
-    "@noble/hashes": "2.0.1"
-  },
+  "dependencies": {},
   "devDependencies": {
     "nbb": "^1.4.208"
   }

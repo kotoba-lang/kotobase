@@ -24,7 +24,7 @@
         ;; not a second implementation of CID primitives.
         io.github.kotoba-lang/io-multiformats
         {:git/url "https://github.com/kotoba-lang/io-multiformats.git"
-         :git/sha "c5963264a8da78ece878b04da18225abdbb84457"}
+         :git/sha "561fe7dfada3db852b127f06d41750dabd3cead9"}
         ;; kotobase.core delegates to the engine, which speaks the
         ;; provider-neutral storage contract. Concrete providers (postgres, d1,
         ;; s3, ipfs, sqlite) are chosen by the host and passed in as `:storage`;
@@ -34,7 +34,7 @@
          :git/sha "e52ddaad020e7d9f790a1839cf77e69f97ff731e"}
         io.github.kotoba-lang/kotobase-engine
         {:git/url "https://github.com/kotoba-lang/kotobase-engine.git"
-         :git/sha "6fc88d2f3142e5fef42085a26233bd032c039760"}}
+         :git/sha "b8b163e889341cdf49217570380872e0575fcbdd"}}
  :aliases
  {:cljs-test {:extra-paths ["test"]
               :extra-deps {org.clojure/clojurescript {:mvn/version "1.11.132"}}}
