@@ -4,7 +4,10 @@
  :rto-limit-ms 600000
  :rpo-limit-ms 300000
  :backup {:encrypted-required true :immutable-required true
-          :digest-verified-required true}
+          :digest-verified-required true
+          :verification-proof-required true
+          :allowed-algorithms #{"SHA-256"}
+          :verification-keys #{"verification-key-2026-q3"}}
  :required-exercises #{:destructive-restore :corruption-repair :lost-key}
  :lost-key {:must-fail-closed true
             :recovery-path-required true}
