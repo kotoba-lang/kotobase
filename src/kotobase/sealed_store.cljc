@@ -18,15 +18,33 @@
   (and (some? ciphertext)
        (or (not (coll? ciphertext)) (seq ciphertext))))
 
+(defn- extract-key-id-from-plaintext
+  "Extract key identifier from plaintext. Convention: plaintext may carry
+  `:__key-id` metadata or a nested `:meta/__key-id`. Falls back to epoch 1."
+  [plaintext]
+  (or (get plaintext :__key-id)
+      (get-in plaintext [:meta :__key-id])
+      1))
+
+(defn- extract-key-id-from-sealed
+  "Extract key identifier from sealed envelope. Uses :envelope/epoch as key-id."
+  [sealed]
+  (when (and (map? sealed) (contains? sealed :envelope/epoch))
+    (:envelope/epoch sealed)))
+
 (defn evaluate-seal
-  [{:keys [seal-fn ciphertext-digest-fn crypto-policy]
+  [{:keys [seal-fn ciphertext-digest-fn crypto-policy key-state-lookup]
     :or {crypto-policy default-policy}}
    plaintext]
-  (let [sealed (when (ifn? seal-fn) (seal-fn plaintext))
+  (let [key-id (extract-key-id-from-plaintext plaintext)
+        key-state (when (and key-state-lookup key-id) (key-state-lookup key-id))
+        seal-allowed? (contains? #{:active :decrypt-or-verify-only} key-state)
+        sealed (when (and seal-allowed? (ifn? seal-fn)) (seal-fn plaintext))
         crypto-result (crypto/check-production-envelope crypto-policy sealed)
         computed-digest (when (and sealed (ifn? ciphertext-digest-fn))
                           (ciphertext-digest-fn (:sealed/ciphertext sealed)))
         violations (cond-> []
+                     (not seal-allowed?) (conj :key-state-invalid-for-seal)
                      (not (ifn? seal-fn)) (conj :sealer-required)
                      (not (:valid? crypto-result)) (conj :hybrid-envelope)
                      (not (present-ciphertext? (:sealed/ciphertext sealed)))
@@ -38,7 +56,8 @@
     {:sealed/allowed? (empty? violations)
      :sealed/violations violations
      :sealed/crypto crypto-result
-     :sealed/value sealed}))
+     :sealed/value sealed
+     :sealed/key-state key-state}))
 
 (defn seal-value! [options plaintext]
   (let [result (evaluate-seal options plaintext)]
@@ -54,14 +73,18 @@
   (and (map? value) (contains? value :sealed/ciphertext)))
 
 (defn evaluate-open
-  [{:keys [unseal-fn ciphertext-digest-fn crypto-policy]
+  [{:keys [unseal-fn ciphertext-digest-fn crypto-policy key-state-lookup]
     :or {crypto-policy default-policy}}
    sealed]
-  (let [crypto-result (crypto/check-production-envelope crypto-policy sealed)
+  (let [key-id (extract-key-id-from-sealed sealed)
+        key-state (when (and key-state-lookup key-id) (key-state-lookup key-id))
+        unseal-allowed? (contains? #{:active :decrypt-or-verify-only :revoked} key-state)
+        crypto-result (crypto/check-production-envelope crypto-policy sealed)
         computed-digest (when (and (sealed-envelope? sealed)
                                    (ifn? ciphertext-digest-fn))
                           (ciphertext-digest-fn (:sealed/ciphertext sealed)))
         violations (cond-> []
+                     (not unseal-allowed?) (conj :key-state-invalid-for-unseal)
                      (not (ifn? unseal-fn)) (conj :unsealer-required)
                      (not (:valid? crypto-result)) (conj :hybrid-envelope)
                      (not (present-ciphertext? (:sealed/ciphertext sealed)))
@@ -73,7 +96,8 @@
     {:sealed/allowed? (empty? violations)
      :sealed/violations violations
      :sealed/crypto crypto-result
-     :sealed/value sealed}))
+     :sealed/value sealed
+     :sealed/key-state key-state}))
 
 (defn open-value!
   "Verify the production envelope and ciphertext digest before host-provided
