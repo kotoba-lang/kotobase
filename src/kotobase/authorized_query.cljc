@@ -4,15 +4,84 @@
   A guest supplies data, never a direct database connection or an evaluator.
   The injected policy compiler determines which projection and scope may reach
   the injected Datalog evaluator at one immutable basis."
-  (:require [clojure.set :as set]))
+  (:require [clojure.set :as set]
+            [clojure.string :as str]))
 
 (def query-keys #{:find :where :scope :limit})
 (def scope-keys #{:tenant :resources :purpose :basis})
 (def max-clauses 32)
 (def max-limit 1000)
+(def max-join-fanout 100)
+(def max-variable-count 20)
 
 (defn- reject! [reason data]
   (throw (ex-info "authorized query rejected" (assoc data :kotobase.query/reason reason))))
+
+(defn- extract-vars
+  "Extract all logic variables (symbols starting with ?) from a pattern."
+  [pattern]
+  (filterv #(and (symbol? %) (str/starts-with? (name %) "?")) pattern))
+
+(defn- build-var-dep-graph
+  "Build a variable dependency graph from where clauses.
+   Returns a map of var -> set of vars it depends on (shares a clause with)."
+  [where-clauses]
+  (let [var-clauses (group-by first
+                              (mapcat (fn [clause]
+                                        (let [vs (extract-vars clause)]
+                                          (for [v vs] [v clause])))
+                                      where-clauses))
+        deps (reduce-kv (fn [acc var clauses]
+                          (let [clause-vars (set (mapcat extract-vars (map second clauses)))
+                                related-vars (set/union clause-vars #{var})]
+                            (assoc acc var (disj related-vars var))))
+                        {} var-clauses)]
+    deps))
+
+(defn- has-cycle?
+  "Detect cycles in a variable dependency graph using DFS."
+  [graph]
+  (let [visited (atom #{})
+        rec-stack (atom #{})
+        cycle-found (atom false)]
+    (doseq [node (keys graph)
+            :while (not @cycle-found)]
+      (when-not (contains? @visited node)
+        (letfn [(dfs [n]
+                  (when-not @cycle-found
+                    (swap! visited conj n)
+                    (swap! rec-stack conj n)
+                    (doseq [neighbor (get graph n #{})
+                            :while (not @cycle-found)]
+                      (cond
+                        (contains? @rec-stack neighbor)
+                        (reset! cycle-found true)
+                        (not (contains? @visited neighbor))
+                        (dfs neighbor)))
+                    (swap! rec-stack disj n)))]
+          (dfs node))))
+    @cycle-found))
+
+(defn- estimate-join-fanout
+  "Estimate the maximum intermediate join size from where clauses.
+   Heuristic: count unique variables that appear in multiple clauses (join edges),
+   and estimate fanout based on clause counts sharing variables."
+  [where-clauses]
+  (let [var-clauses (group-by identity
+                              (mapcat (fn [clause]
+                                        (let [vs (extract-vars clause)]
+                                          (for [v vs] [v clause])))
+                                      where-clauses))
+        join-vars (filter (fn [[_ clauses]] (> (count clauses) 1)) var-clauses)
+        max-clauses-per-var (if (seq join-vars)
+                              (apply max (map (comp count val) join-vars))
+                              1)]
+    (* (count join-vars) max-clauses-per-var)))
+
+(defn- count-variables
+  "Count unique variables across all where clauses."
+  [where-clauses]
+  (count (set (mapcat extract-vars where-clauses))))
 
 (defn valid-query? [query]
   (and (map? query)
@@ -20,6 +89,12 @@
        (vector? (:find query)) (seq (:find query)) (<= (count (:find query)) 64)
        (vector? (:where query)) (<= (count (:where query)) max-clauses)
        (every? #(and (vector? %) (<= 1 (count %) 4)) (:where query))
+       ;; Static analysis: recursion detection
+       (not (has-cycle? (build-var-dep-graph (:where query))))
+       ;; Static analysis: variable count limit
+       (<= (count-variables (:where query)) max-variable-count)
+       ;; Static analysis: join fanout estimation
+       (<= (estimate-join-fanout (:where query)) max-join-fanout)
        (map? (:scope query)) (= scope-keys (set (keys (:scope query))))
        (string? (get-in query [:scope :tenant])) (seq (get-in query [:scope :tenant]))
        (set? (get-in query [:scope :resources])) (seq (get-in query [:scope :resources]))
