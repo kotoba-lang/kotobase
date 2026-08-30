@@ -8,7 +8,7 @@
  ;; Cloudflare Worker / kotoba-WASM) remain for compatibility; new persistence
  ;; targets `kotobase.core`.
  :deps {io.github.kotoba-lang/security {:git/url "https://github.com/kotoba-lang/security.git"
-                                        :git/sha "b4ff9d8a56263030bc92539b101e1eeb2dbfce39"}
+                                        :git/sha "74235d1cdf8034334f01dcb2f6faaff0c731146e"}
         io.github.kotoba-lang/abi {:git/url "https://github.com/kotoba-lang/abi.git"
                                    :git/sha "32ee84b2efc92478c846629c8d8319280eed506c"}
         io.github.kotoba-lang/identity
@@ -39,7 +39,8 @@
  {:cljs-test {:extra-paths ["test"]
               :extra-deps {org.clojure/clojurescript {:mvn/version "1.11.132"}}}
   :test {:extra-paths ["test"]
-         :extra-deps {io.github.cognitect-labs/test-runner
+         :extra-deps {io.github.kotoba-lang/security {:local/root "../security"}
+                      io.github.cognitect-labs/test-runner
                       {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
          :main-opts ["-m" "cognitect.test-runner"]
          :exec-fn cognitect.test-runner.api/test}
