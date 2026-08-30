@@ -62,3 +62,44 @@
             (log/verify-rotation old new
                                  (update rotation :signatures dissoc "key-2")
                                  verifier))))))
+
+(deftest checkpoint-replay-detection
+  "Test that submitting a checkpoint with identical tree-size and root as previous is rejected as duplicate"
+  (let [state (-> {:leaves [] :root log/genesis}
+                  (log/append-leaf {:receipt-cid "r1"
+                                    :execution-identity-cid "e1"}))
+        cp1 (log/checkpoint state {:key-id "key-2" :key-epoch 2
+                                   :issued-at 1500
+                                   :previous-checkpoint-cid nil
+                                   :signatures {}})
+        cp1-signed (assoc cp1 :signatures (signatures (dissoc cp1 :signatures)))
+        ;; Create cp2 as exact replay of cp1 (same tree-size, root, issued-at)
+        ;; but with correct previous-checkpoint-cid pointing to cp1
+        cp2-body (assoc (dissoc cp1-signed :signatures)
+                        :previous-checkpoint-cid (log/digest cp1-signed))
+        cp2 (assoc cp2-body :signatures (signatures cp2-body))
+        result (log/verify-checkpoint policy key-schedule cp1-signed cp2 verify)]
+    (is (= #{:transparency/duplicate-checkpoint :transparency/issued-at-non-monotonic}
+           (set (:transparency/errors result))))
+    (is (not (:transparency/valid? result)))))
+
+(deftest checkpoint-replay-with-different-timestamp
+  "Test that replay with same tree-size/root but later timestamp is rejected as duplicate (timestamp check passes)"
+  (let [state (-> {:leaves [] :root log/genesis}
+                  (log/append-leaf {:receipt-cid "r1"
+                                    :execution-identity-cid "e1"}))
+        cp1 (log/checkpoint state {:key-id "key-2" :key-epoch 2
+                                   :issued-at 1500
+                                   :previous-checkpoint-cid nil
+                                   :signatures {}})
+        cp1-signed (assoc cp1 :signatures (signatures (dissoc cp1 :signatures)))
+        ;; Create cp2 as replay with same tree-size/root but LATER timestamp
+        cp2-body (assoc (dissoc cp1-signed :signatures)
+                        :issued-at 1600
+                        :previous-checkpoint-cid (log/digest cp1-signed))
+        cp2 (assoc cp2-body :signatures (signatures cp2-body))
+        result (log/verify-checkpoint policy key-schedule cp1-signed cp2 verify)]
+    ;; Should detect duplicate but NOT non-monotonic (since 1600 > 1500)
+    (is (= #{:transparency/duplicate-checkpoint}
+           (set (:transparency/errors result))))
+    (is (not (:transparency/valid? result)))))
