@@ -64,3 +64,27 @@
       ;; a read of something nobody classified is a read nobody authorised
       (is (some #(= :attribute-not-in-schema (:error %))
                 (class*/projection-errors schema [:mail/subject] ok))))))
+
+(deftest class-order-consistency
+  ;; Prevents configuration drift: if `classes` order changes, inline-threshold
+  ;; must stay at :internal (index 1). This test fails if order is modified
+  ;; without updating inline-threshold-index.
+  ;;
+  ;; The threshold is :internal (index 1). Classes <= :internal must be
+  ;; inline-allowed, classes > :internal must not be.
+  (testing "inline threshold is at :internal boundary"
+    (is (class*/inline-allowed? :public)
+        ":public must be inline-allowed")
+    (is (class*/inline-allowed? :internal)
+        ":internal must be inline-allowed (threshold)")
+    (is (not (class*/inline-allowed? :personal))
+        ":personal must NOT be inline-allowed")
+    (is (not (class*/inline-allowed? :restricted))
+        ":restricted must NOT be inline-allowed"))
+  (testing "ordering is preserved"
+    ;; If classes order changed (e.g. :personal and :restricted swapped),
+    ;; the above assertions would fail because :personal would become
+    ;; inline-allowed or :restricted would become inline-allowed incorrectly.
+    (is (= [true true false false]
+           (map class*/inline-allowed? [:public :internal :personal :restricted]))
+        "Sensitivity order must be :public < :internal < :personal < :restricted")))
