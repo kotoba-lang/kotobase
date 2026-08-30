@@ -115,18 +115,29 @@
 
   (-transact [_ {:keys [tx-id expected-revision puts deletes appends] :as request}]
     (validate-transaction! request)
-    (let [result (volatile! nil)]
+    (let [result (volatile! nil)
+          strict? (:strict-idempotency? @state)]
       (swap! state
              (fn [current]
                (if-let [{prior-request :request receipt :receipt}
                         (get-in current [:tx-receipts tx-id])]
-                 (do
-                   (when-not (= prior-request request)
-                     (throw (ex-info "IStore tx-id reused with different request"
-                                     {:type :kotobase.store/transaction-id-conflict
-                                      :tx-id tx-id})))
-                   (vreset! result receipt)
-                   current)
+                 (cond
+                   ;; Strict mode: reject ALL replays (identical or different)
+                   strict?
+                   (throw (ex-info "IStore tx-id replay rejected"
+                                   {:type :kotobase.store/transaction-id-replay
+                                    :tx-id tx-id
+                                    :strict? true}))
+                   ;; Normal mode: different request → conflict (unchanged)
+                   (not (= prior-request request))
+                   (throw (ex-info "IStore tx-id reused with different request"
+                                   {:type :kotobase.store/transaction-id-conflict
+                                    :tx-id tx-id}))
+                   ;; Normal mode: identical request → allow (idempotent)
+                   :else
+                   (do
+                     (vreset! result receipt)
+                     current))
                  (do
                    (when-not (= expected-revision (:revision current))
                      (throw (revision-conflict expected-revision
@@ -161,12 +172,15 @@
       @result)))
 
 (defn local-store
-  "A fresh in-process store. Pass `:seed` to preload `{:docs … :streams … :seq …}`."
+  "A fresh in-process store. Pass `:seed` to preload `{:docs … :streams … :seq …}`.
+   Pass `:strict-idempotency? true` to reject ALL transaction replays (including identical requests),
+   preventing timestamp spoofing via replay attacks."
   ([] (local-store {}))
-  ([{:keys [docs streams seq revision tx-receipts]
-     :or {docs {} streams {} seq 0 revision 0 tx-receipts {}}}]
+  ([{:keys [docs streams seq revision tx-receipts strict-idempotency?]
+     :or {docs {} streams {} seq 0 revision 0 tx-receipts {} strict-idempotency? false}}]
    (->LocalStore (atom {:docs docs :streams streams :seq seq
-                        :revision revision :tx-receipts tx-receipts}))))
+                        :revision revision :tx-receipts tx-receipts
+                        :strict-idempotency? strict-idempotency?}))))
 
 (defn snapshot
   "The store's full state as a value — for checkpointing / pushing to the cloud."
