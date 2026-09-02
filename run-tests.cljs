@@ -28,6 +28,7 @@
             [kotobase.erasure-test]
             [kotobase.evidence-test]
             [kotobase.execution-contract-test]
+            [kotobase.execution-keys-test]
             [kotobase.governed-execution-test]
             [kotobase.guarded-test]
             [kotobase.sealed-store-test]

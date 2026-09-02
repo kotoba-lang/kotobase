@@ -114,10 +114,15 @@ back*, not *the write call returned*.
 Named here so the next reader does not mistake the wiring for the finished
 thing:
 
-- **The signature scheme is still the host's.** `:verify` is asked a yes/no
-  question and must answer literally `true`; which key, which algorithm, and
-  whether that key was authorised for this tenant at this epoch are decided
-  outside. Binding a key to a principal and an epoch is separate work.
+- **The cryptography is still the host's**, but which key may sign is not.
+  `kotobase.execution-keys` makes a signature name the key that made it
+  (`{:key/id :key/algorithm :signature/value}`) and refuses it unless a
+  registry says that key, under that algorithm, was authorised to sign that
+  kind of record for **this tenant at this epoch** — and the tenant and epoch
+  come from the envelope being executed, passed in by the executor, so a
+  verifier cannot be built around its own idea of them. A registry that
+  returns nothing is a refusal. Only the signature scheme itself is injected,
+  for the same reason the codec is.
 - **A codec that lies is not caught.** The address function is checked for
   behaving like an address, not for being the canonical one; a function that
   special-cases the probe and answers freely elsewhere passes.

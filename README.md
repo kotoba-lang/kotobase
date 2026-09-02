@@ -58,6 +58,14 @@ return only after the ExecutionReceipt has been committed and read back. It
 replaces the disclosure read path, which committed a receipt that answered one
 of the contract's eight fields.
 
+`kotobase.execution-keys` answers *which* key, not just whether some key
+signed. A signature names the key that made it, and the verifier refuses it
+unless a registry says that key id, under that algorithm, was authorised to
+sign that kind of record for this tenant at this revocation epoch — with the
+tenant and epoch supplied by the execution rather than by whatever the
+verifier was built with. A registry that returns nothing refuses; that is the
+likeliest way for a key check to pass silently.
+
 `kotobase.metering` counts what an execution spent, at the seam between
 `kotobase.core` and the provider: how many times blocks were requested, how
 many bytes came back, and how many times the caller had to wait for an answer
