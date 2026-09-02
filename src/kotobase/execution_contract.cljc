@@ -34,6 +34,10 @@
 (defn- non-empty-string? [value]
   (and (string? value) (seq value)))
 
+(defn- non-empty-proof? [value]
+  (or (non-empty-string? value)
+      (and (coll? value) (seq value))))
+
 (defn- exact-keys! [record expected record-type]
   (when-not (map? record)
     (reject! :not-a-map {:record/type record-type}))
@@ -70,7 +74,7 @@
                  (or (nil? (:parent manifest))
                      (non-empty-string? (:parent manifest)))
                  (non-empty-string? (:issued-at manifest))
-                 (some? (:signature manifest)))
+                 (non-empty-proof? (:signature manifest)))
     (reject! :invalid-manifest {}))
   manifest)
 
@@ -115,7 +119,7 @@
                            ((juxt :dependent-hops :requests :bytes) cost))
                    (keyword? (:cache-profile cost))
                    (non-empty-string? (:implementation/build receipt))
-                   (some? (:signature receipt)))
+                   (non-empty-proof? (:signature receipt)))
       (reject! :invalid-receipt {})))
   receipt)
 

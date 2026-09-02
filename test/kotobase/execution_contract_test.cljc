@@ -78,7 +78,9 @@
   (is (= :invalid-keys
          (reason #(contract/validate-receipt!
                    (assoc receipt :backend :datalog)))))
-  (is (not (contains? request :query/text))))
+  (is (= :invalid-receipt
+         (reason #(contract/validate-receipt!
+                   (assoc receipt :signature false))))))
 
 (deftest receipts-close-both-allow-and-deny-decisions
   (is (= :invalid-receipt
