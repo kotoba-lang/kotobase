@@ -2,6 +2,7 @@
   (:require [cljs.test :as t]
             [kotobase.canonical-causal-commit-async-test]
             [kotobase.evidence-test]
+            [kotobase.execution-keys-test]
             [kotobase.governed-execution-async-test]
             ;; the portable governed suite runs here too, under the real
             ;; ClojureScript compiler. `kotobase.execution-identity` writes
@@ -17,6 +18,7 @@
 (defn -main []
   (t/run-tests 'kotobase.canonical-causal-commit-async-test
                'kotobase.evidence-test
+               'kotobase.execution-keys-test
                'kotobase.governed-execution-async-test
                'kotobase.governed-execution-test))
 

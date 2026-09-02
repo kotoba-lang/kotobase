@@ -185,14 +185,24 @@
   true)
 
 (defn- signature-request
-  "What the host is asked to verify: a record's own address and its proof.
+  "What the host is asked to verify: a record's address, its proof, and the
+  authority context this execution is running under.
 
   The address is of the record *without* its signature, because a signature
-  cannot be inside the bytes it signs."
-  [value-cid kind record]
+  cannot be inside the bytes it signs.
+
+  `:tenant` and `:epoch` come from the envelope being executed rather than
+  from whatever the verifier was built with. A verifier that closed over its
+  own idea of them could be handed a request for a different tenant or a
+  superseded epoch and never notice; told by the executor, it cannot. What it
+  does with them — which keys are registered for that tenant at that epoch —
+  is `kotobase.execution-keys`' business, not this namespace's."
+  [value-cid request kind record]
   {:record kind
    :payload-cid (value-cid (dissoc record :signature))
-   :signature (:signature record)})
+   :signature (:signature record)
+   :tenant (:tenant request)
+   :epoch (:authority/epoch request)})
 
 (defn- verified! [kind verdict]
   (when-not (true? verdict)
@@ -344,15 +354,15 @@
                                                     result-root (cost))
                          signed (signed! unsigned (sign unsigned))]
                      (verified! :execution-receipt
-                                (verify (signature-request value-cid
+                                (verify (signature-request value-cid request
                                                            :execution-receipt
                                                            signed)))
                      (validated-bundle options ids signed)))]
     (bind-scope! request query)
     (bind-digest! request (value-cid query))
     (verified! :execution-manifest
-               (verify (signature-request value-cid :execution-manifest
-                                          manifest)))
+               (verify (signature-request value-cid request
+                                          :execution-manifest manifest)))
     (nonce-verdict! request (consume-nonce! (:nonce request)))
     (let [captured (atom nil)
           admitted (atom false)
@@ -401,6 +411,7 @@
                   (then (sign unsigned) #(signed! unsigned %))))
          (.then (fn [signed]
                   (-> (then (verify (signature-request value-cid
+                                                       (:request options)
                                                        :execution-receipt
                                                        signed))
                             #(verified! :execution-receipt %))
@@ -437,8 +448,8 @@
                                  ack))))]
          (bind-scope! request query)
          (bind-digest! request (value-cid query))
-         (-> (then (verify (signature-request value-cid :execution-manifest
-                                              manifest))
+         (-> (then (verify (signature-request value-cid request
+                                              :execution-manifest manifest))
                    #(verified! :execution-manifest %))
              (.then (fn [_] (consume-nonce! (:nonce request))))
              (.then #(nonce-verdict! request %))
