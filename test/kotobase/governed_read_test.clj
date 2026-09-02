@@ -30,8 +30,11 @@
 
 (def served [{:invoice/id "INV-42" :invoice/amount 5000}])
 
-(defn- request-at
-  "The composition, with every record bound to the same immutable basis."
+(defn request-at
+  "The composition, with every record bound to the same immutable basis.
+
+  Public because `kotobase.metering-test` drives the same path with a metered
+  backend; two fixtures for one composition would let one of them go stale."
   [db basis evaluated & {:as overrides}]
   (let [query (assoc-in trust-fixture/invoice-query [:scope :basis] basis)
         envelope (assoc contract-fixture/request

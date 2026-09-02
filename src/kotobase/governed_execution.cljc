@@ -51,11 +51,11 @@
   different for different values — which refuses a stub or a constant but not
   a codec that lies.
 
-  **Not yet evidence: `:cost`.** It comes from a meter the host is asked for
-  *after* evaluation rather than a value the caller declares before it, so it
-  cannot be attested ahead of the work — but it is still the host's number.
-  Measuring dependent hops, provider requests, and bytes from the pack reads
-  themselves is separate, unfinished work."
+  `:cost` is asked for *after* evaluation, so it cannot be attested ahead of
+  the work. `kotobase.metering` counts it at the storage seam — requests,
+  bytes and the number of times the caller had to wait for an answer before
+  it could ask the next question — leaving only `:cache-profile` as the
+  caller's word, which that namespace marks rather than measures."
   (:require [kotobase.execution-contract :as contract]
             [kotobase.guarded :as guarded]))
 
