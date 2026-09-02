@@ -82,8 +82,14 @@ likeliest way for a key check to pass silently.
 many bytes came back, and how many times the caller had to wait for an answer
 before it could ask the next question. That last number is what a pack layout
 exists to reduce and what a wall clock on a loaded machine cannot tell you.
-`:cache-profile` is the one field it does not measure, and it is marked as the
-caller's word rather than given a plausible value.
+`:cache-profile` takes two meters rather than one — a cache in front of a
+single decorator is invisible to it and a cache behind it is the provider's
+business — so a meter above a cache and one below it derive how much the cache
+absorbed: `:hot` when nothing reached the provider, `:cold` when everything
+did, `:warm` in between. The same cache is cold on the read that fills it and
+hot on the next one, which is why the field is worth measuring per execution
+rather than configuring per host. With one meter it stays the caller's word
+and `:unmeasured` is the honest value.
 
 `kotobase.causal-commit` is the canonical causal-identity adapter. It commits
 identity transitions and LLM/model/agent authority decisions against an exact
