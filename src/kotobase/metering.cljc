@@ -23,11 +23,17 @@
     metric is round trip count`), and it is the one a wall clock on a loaded
     machine cannot tell you.
 
-  The fourth, `:cache-profile`, is **not measured and does not pretend to
-  be**. A cache in front of this decorator is invisible to it, and a cache
-  behind it is the provider's business; the meter would be reporting the
-  position of its own wrapper. The caller names the profile when it opens a
-  span, and `:unmeasured` is the honest value when nothing measured it.
+  The fourth, `:cache-profile`, cannot be measured by **one** meter: a cache in
+  front of the decorator is invisible to it and a cache behind it is the
+  provider's business, so a single wrapper would be reporting its own position.
+  It takes two. Put one meter above a cache and one below it, open a
+  `tiered-span`, and how much the cache absorbed is the difference between what
+  the engine asked for and what reached the provider — `:hot` when nothing did,
+  `:cold` when everything did, `:warm` in between.
+
+  With one meter the profile stays the caller's word, and `:unmeasured` is the
+  honest value for it. `span` takes it as an argument for that reason: a field
+  that is going to be guessed should be guessed somewhere visible.
 
   A meter observes; it does not decide. Nothing here refuses a read."
   (:require [kotobase.storage.core :as storage]))
@@ -102,6 +108,50 @@
        storage/IBackendCapabilities
        (-capabilities [_] (storage/-capabilities backend)))}))
 
+(defn- delta [opened now]
+  {:requests (- (:requests now) (:requests opened))
+   :dependent-hops (- (:dependent-hops now) (:dependent-hops opened))
+   :bytes (- (:bytes now) (:bytes opened))})
+
+(defn cache-profile
+  "How much of what the engine asked for never reached the provider.
+
+  ABOVE is what was asked of the cache, BELOW what the cache had to fetch.
+  This is a description of one window, not of a deployment: the same cache is
+  cold on the read that fills it and hot on the next one, which is what makes
+  the field worth measuring per execution rather than configuring per host."
+  [above below]
+  (let [asked (:requests above)
+        fetched (:requests below)]
+    (cond
+      (not (and (nat-int? asked) (nat-int? fetched) (<= fetched asked)))
+      ;; below cannot exceed above unless the two meters are not on the same
+      ;; path, and a number derived from meters that disagree is not a
+      ;; measurement
+      (reject! :meters-not-in-line {:above asked :below fetched})
+
+      (zero? asked) :no-reads
+      (zero? fetched) :hot
+      (= fetched asked) :cold
+      :else :warm)))
+
+(defn tiered-span
+  "Open one window across a cache and the provider behind it.
+
+  ABOVE meters what the engine asks for; BELOW meters what the cache could not
+  answer. The counts in the receipt are the provider's — that is what the
+  execution actually cost — and the profile is what the cache absorbed."
+  [{:keys [above below] :as meters}]
+  (when-not (and (map? meters) (= #{:above :below} (set (keys meters)))
+                 (ifn? (:read above)) (ifn? (:read below)))
+    (reject! :not-a-meter-pair {}))
+  (let [opened-above ((:read above))
+        opened-below ((:read below))]
+    (fn []
+      (let [asked (delta opened-above ((:read above)))
+            fetched (delta opened-below ((:read below)))]
+        (assoc fetched :cache-profile (cache-profile asked fetched))))))
+
 (defn span
   "Open a measurement window and return the `:cost` function for one execution.
 
@@ -117,9 +167,4 @@
   (when-not (keyword? profile)
     (reject! :invalid-cache-profile {:profile profile}))
   (let [opened (read)]
-    (fn []
-      (let [now (read)]
-        {:requests (- (:requests now) (:requests opened))
-         :dependent-hops (- (:dependent-hops now) (:dependent-hops opened))
-         :bytes (- (:bytes now) (:bytes opened))
-         :cache-profile profile}))))
+    (fn [] (assoc (delta opened (read)) :cache-profile profile))))

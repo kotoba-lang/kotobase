@@ -130,9 +130,11 @@ thing:
   applied to the caller's argument, because the composition deliberately does
   not require a codec.
 - **`:cost` is measured at the storage seam** by `kotobase.metering`, which
-  counts requests, bytes and hops on the way through to the provider. Only
-  `:cache-profile` is still the caller's word, and that namespace says so
-  rather than inventing a value for it.
+  counts requests, bytes and hops on the way through to the provider, and
+  derives `:cache-profile` from a meter above a cache and one below it. A
+  single meter cannot answer that field — it would be reporting its own
+  position — so with one meter it stays the caller's word and `:unmeasured`
+  is the value that says so.
 - **The receipt planes are not yet consolidated.** `authorized-query`'s
   disclosure receipt, `causal-commit`'s decision commits, `code-graph`'s
   execution receipts and `admission`'s audit receipts still exist beside this
