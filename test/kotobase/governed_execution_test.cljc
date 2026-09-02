@@ -293,6 +293,29 @@
       ;; plane for something policy never decided
       (is (= [] (committed journal))))))
 
+(deftest a-failure-after-admission-is-not-a-denial
+  ;; `kotobase.authorized-query` raises its own reason key on both sides of
+  ;; evaluation. Before it, that key means policy refused; after it, it means
+  ;; the plumbing did — and writing the second one into the evidence plane as
+  ;; `:deny` records a decision policy never made
+  (let [journal (atom [])]
+    (testing "a result that is not a vector"
+      (is (= :invalid-result
+             (reason #(governed/execute!
+                       (options journal
+                                :evaluate! (fn [_ _] (seq served)))))))
+      (is (= [] (committed journal))))
+    (testing "and an acknowledgement the gate will not accept"
+      ;; durable and named, so this layer lets it past; rejected one layer up
+      (is (= :receipt-not-durable
+             (reason #(governed/execute!
+                       (options journal
+                                :commit!
+                                (fn [_] {:receipt/durable? true
+                                         :receipt/cid "bafy-exec-receipt"
+                                         :receipt/commit-cid 42}))))))
+      (is (= [] (committed journal))))))
+
 (deftest a-root-the-host-could-not-compute-is-not-a-result
   (let [journal (atom [])]
     (is (= :invalid-result-root

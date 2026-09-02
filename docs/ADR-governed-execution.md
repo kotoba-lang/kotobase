@@ -57,10 +57,15 @@ skips a step, in this order:
 
 A refusal is committed too. "Success and refusal share one evidence plane" is
 only true if a denial is as durable as a disclosure — otherwise the cheapest
-way to leave no trace is to be refused. Only the policy layers' own refusals
-become deny receipts: an evaluator that crashed is not an authority decision,
-and recording it as `:deny` would put a policy decision in the evidence plane
-for something policy never decided.
+way to leave no trace is to be refused. Only the policy layers' own refusals,
+and only before admission, become deny receipts. Both halves are load bearing:
+an evaluator that crashed is not an authority decision, and recording it as
+`:deny` would put a policy decision in the evidence plane for something policy
+never decided — but the reason key alone does not separate them, because
+`kotobase.authorized-query` raises the same key *after* the rows exist for a
+result that is not a vector or an acknowledgement it will not accept. Those
+are plumbing failures. Admission is entirely before evaluation, so reaching
+the evaluator is what tells the two apart.
 
 `kotobase.authorized-query/execute!` now hands its receipt sink the rows as
 well as their count. A receipt that binds only a row count is not evidence

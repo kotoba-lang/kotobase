@@ -232,15 +232,22 @@
   ack)
 
 (defn- authority-refusal?
-  "Only the policy layers' own refusals become deny receipts.
+  "Only the policy layers' own refusals, and only before admission, become
+  deny receipts.
 
-  An evaluator that crashed is not an authority decision, and recording it as
-  one would put `:deny` in the evidence plane for something policy never
-  decided."
-  [error]
+  Both halves are load bearing. An evaluator that crashed is not an authority
+  decision, and recording it as one would put `:deny` in the evidence plane
+  for something policy never decided. But the reason key alone is not enough:
+  `kotobase.authorized-query` also raises `:kotobase.query/reason` *after*
+  the rows exist — for a result that is not a vector, or a receipt
+  acknowledgement it will not accept — and those are plumbing failures, not
+  refusals. Admission is entirely before evaluation, so `admitted?` separates
+  them exactly."
+  [error admitted?]
   (let [data (ex-data error)]
-    (boolean (or (:kotobase.guarded/reason data)
-                 (:kotobase.query/reason data)))))
+    (boolean (and (not admitted?)
+                  (or (:kotobase.guarded/reason data)
+                      (:kotobase.query/reason data))))))
 
 (defn- refused! [error ack]
   (throw (ex-info "governed execution refused"
@@ -255,13 +262,15 @@
   The caller's own `:receipt!` never reaches the guarded path: the contract
   record *is* the receipt, so there is no second plane to keep in step. The
   evaluator is wrapped so the compiled decision is bound to the envelope
-  before any row is read."
-  [{:keys [authorize! schema grant query evaluate! request]} sink]
+  before any row is read, and so that reaching it at all is recorded: past
+  this point a failure is not a denial."
+  [{:keys [authorize! schema grant query evaluate! request]} sink admitted]
   {:authorize! authorize!
    :schema schema
    :grant grant
    :query query
    :evaluate! (fn [compiled-query decision]
+                (reset! admitted true)
                 (bind-decision! request decision)
                 (evaluate! compiled-query decision))
    :receipt! sink})
@@ -283,6 +292,7 @@
     (bind-digest! request (query-digest query))
     (nonce-verdict! request (consume-nonce! (:nonce request)))
     (let [captured (atom nil)
+          admitted (atom false)
           sink (fn [{:keys [compiled rows]}]
                  (let [signed (validated-bundle
                                options
@@ -299,9 +309,9 @@
                    (reset! captured signed)
                    ack))
           result (try
-                   (guarded/read! (guarded-request options sink))
+                   (guarded/read! (guarded-request options sink admitted))
                    (catch #?(:clj Exception :cljs :default) error
-                     (if (authority-refusal? error)
+                     (if (authority-refusal? error @admitted)
                        (let [unsigned (unsigned-receipt
                                        options
                                        ;; a refusal has no compiled query, so
@@ -352,6 +362,7 @@
        (contract/validate-manifest! (:manifest options))
        (let [consume-nonce! (timing! options)
              captured (atom nil)
+             admitted (atom false)
              sink (fn [{:keys [compiled rows]}]
                     (-> (js/Promise.all
                          #js [(js/Promise.resolve (plan-digest compiled))
@@ -372,11 +383,11 @@
              (.then (fn [_] (consume-nonce! (:nonce request))))
              (.then #(nonce-verdict! request %))
              (.then (fn [_] (guarded/read-async!
-                             (guarded-request options sink))))
+                             (guarded-request options sink admitted))))
              (.then (fn [result] (assoc result :execution/receipt @captured)))
              (.catch
               (fn [error]
-                (if (authority-refusal? error)
+                (if (authority-refusal? error @admitted)
                   (-> (then (plan-digest nil)
                             #(receipt-async options (checked-plan-digest %)
                                             :deny nil))
