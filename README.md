@@ -58,6 +58,14 @@ return only after the ExecutionReceipt has been committed and read back. It
 replaces the disclosure read path, which committed a receipt that answered one
 of the contract's eight fields.
 
+`kotobase.metering` counts what an execution spent, at the seam between
+`kotobase.core` and the provider: how many times blocks were requested, how
+many bytes came back, and how many times the caller had to wait for an answer
+before it could ask the next question. That last number is what a pack layout
+exists to reduce and what a wall clock on a loaded machine cannot tell you.
+`:cache-profile` is the one field it does not measure, and it is marked as the
+caller's word rather than given a plausible value.
+
 `kotobase.causal-commit` is the canonical causal-identity adapter. It commits
 identity transitions and LLM/model/agent authority decisions against an exact
 immutable basis CID without consulting or publishing a mutable ref. The permanent projection contains attributed

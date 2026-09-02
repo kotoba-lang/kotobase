@@ -124,11 +124,10 @@ thing:
   `kotobase.execution-identity/conformant?` is the stronger check and is not
   applied to the caller's argument, because the composition deliberately does
   not require a codec.
-- **`:cost` is not measured.** It comes from a meter asked for *after*
-  evaluation rather than a value declared before it, so it cannot be attested
-  ahead of the work — but it remains the host's number. Deriving dependent
-  hops, provider requests and bytes from the pack reads themselves is
-  unfinished.
+- **`:cost` is measured at the storage seam** by `kotobase.metering`, which
+  counts requests, bytes and hops on the way through to the provider. Only
+  `:cache-profile` is still the caller's word, and that namespace says so
+  rather than inventing a value for it.
 - **The receipt planes are not yet consolidated.** `authorized-query`'s
   disclosure receipt, `causal-commit`'s decision commits, `code-graph`'s
   execution receipts and `admission`'s audit receipts still exist beside this
