@@ -132,8 +132,10 @@ thing:
 - **The receipt planes are not yet consolidated.** `authorized-query`'s
   disclosure receipt, `causal-commit`'s decision commits, `code-graph`'s
   execution receipts and `admission`'s audit receipts still exist beside this
-  one. Until they are adapters onto the v1 contract, this is one more kind of
-  receipt, not one instead of several.
+  one. `kotobase.evidence` now lifts what can be lifted and refuses what
+  cannot, so the distance from each plane to this one is measured rather than
+  asserted — see [`ADR-evidence-plane.md`](ADR-evidence-plane.md) — but no
+  plane has been retired.
 - **There is no cross-protocol conformance suite.** The contract's stated
   purpose is that Datalog, SQL, SPARQL, Cypher, GraphQL and Gremlin produce
   comparable evidence for the same semantic request. Nothing yet runs one

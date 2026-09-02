@@ -8,15 +8,24 @@
 
 (def version 1)
 
-(def ^:private manifest-keys
+;; The three key sets are public because an adapter that brings another
+;; plane's records onto this one has to know exactly which fields it must
+;; answer, and a set restated somewhere else drifts the moment a version 2
+;; adds a field. `kotobase.evidence` derives from these rather than repeating
+;; them.
+
+(def manifest-keys
+  "Exactly the fields of a version 1 ExecutionManifest."
   #{:execution/version :data/commit :authority/policy :authority/epoch
     :location/manifest :schema/root :parent :issued-at :signature})
 
-(def ^:private request-keys
+(def request-keys
+  "Exactly the fields of a version 1 RequestEnvelope."
   #{:request/version :principal :tenant :graph :operation :query/digest
     :base/commit :authority/policy :authority/epoch :nonce :expires-at})
 
-(def ^:private receipt-keys
+(def receipt-keys
+  "Exactly the fields of a version 1 ExecutionReceipt."
   #{:receipt/version :request/digest :execution/manifest :query/plan-digest
     :authority/decision :result/root :cost :implementation/build :signature})
 
