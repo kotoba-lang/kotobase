@@ -14,12 +14,6 @@
               :blind-fn pr-str
               :visible? (constantly true)}))
 
-(defn- receipt-template-at [basis]
-  (-> fixture/receipt-template
-      (assoc :causal.receipt/basis-cid basis)
-      (assoc-in [:causal.receipt/decision :decision/trust-basis-cid]
-                basis)))
-
 (defn- failing-block-backend [delegate]
   (let [writes (atom 0)]
     {:writes writes
@@ -65,54 +59,6 @@
     (is (= ["transition:repentance" "epoch:new"]
            (mapv :db/id datoms)))
     (is (zero? (:identity.epoch/initial-trust (second datoms))))))
-
-(deftest protected-rows-return-only-with-an-exact-commit-locator
-  (let [backend (memory/memory-store)
-        db (database backend)
-        basis (core/commit-at!
-               db nil [["INV-42" "invoice/id" "INV-42"]
-                       ["INV-42" "invoice/amount" "5000"]])
-        template (receipt-template-at basis)
-        query (assoc-in fixture/invoice-query [:scope :basis] basis)
-        result
-        (causal/read!
-         {:database db
-          :disclosure {:template template
-                       :expected-basis-cid basis
-                       :receipt-cid-fn (constantly "bafy-disclosure")
-                       :at "2026-08-27T01:00:01Z"}
-          :authorize! (fn [_]
-                        {:allowed? true
-                         :projection #{:invoice/id :invoice/amount}
-                         :basis basis
-                         :policy-cid "bafy-authority-policy"})
-          :schema fixture/classified-schema
-          :grant {:granted #{:public :internal} :scopes #{}}
-          :query query
-          :evaluate!
-          (fn [_ _]
-            (let [stored (core/q (core/at-cid db basis)
-                                 ["INV-42" nil nil])
-                  values (into {} (map (juxt :p :o)) stored)]
-              [{:invoice/id (get values "invoice/id")
-                :invoice/amount (parse-long
-                                 (get values "invoice/amount"))}]))})
-        receipt-commit (get-in result
-                               [:provenance :receipt-commit-cid])
-        proof (causal/receipt-at db receipt-commit "bafy-disclosure")
-        stored-receipt (first (:receipt/records proof))]
-    (is (= [{:invoice/id "INV-42" :invoice/amount 5000}]
-           (:rows result)))
-    (is (= "bafy-disclosure"
-           (get-in result [:provenance :receipt-cid])))
-    (is (string? receipt-commit))
-    (is (not= basis receipt-commit))
-    (is (= basis (:receipt/basis-cid proof)))
-    (is (= :disclosed
-           (get-in stored-receipt
-                   [:causal.receipt/outcome :outcome/status])))
-    (is (= 1 (get-in stored-receipt
-                     [:causal.receipt/outcome :outcome/row-count])))))
 
 (deftest canonical-route-fails-closed-on-partial-or-forged-storage
   (testing "a failed block sequence returns no commit acknowledgement"

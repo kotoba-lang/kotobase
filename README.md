@@ -50,11 +50,17 @@ rather than mapped: they are not query executions, and version 1 requires a
 plan digest and a result root. See
 [`docs/ADR-evidence-plane.md`](docs/ADR-evidence-plane.md).
 
+`kotobase.governed-read` is the one read path that serves rows and leaves
+evidence. It binds the trust decision being exercised — an allow, a read, this
+tenant, exactly these resources, and the principal the signed envelope names —
+then runs the governed execution with the canonical CID sink wired in, so rows
+return only after the ExecutionReceipt has been committed and read back. It
+replaces the disclosure read path, which committed a receipt that answered one
+of the contract's eight fields.
+
 `kotobase.causal-commit` is the canonical causal-identity adapter. It commits
-identity transitions, LLM/model/agent decisions, and protected-read receipts
-against an exact immutable basis CID without consulting or publishing a
-mutable ref. Rows are withheld until the receipt commit is durably written and
-reread by its returned CID. The permanent projection contains attributed
+identity transitions and LLM/model/agent authority decisions against an exact
+immutable basis CID without consulting or publishing a mutable ref. The permanent projection contains attributed
 records, decision bases, and content addresses—not raw identity evidence or
 credentials. `kotobase.causal-trust` remains the explicitly named numeric-
 revision compatibility route; the two basis types are never translated.

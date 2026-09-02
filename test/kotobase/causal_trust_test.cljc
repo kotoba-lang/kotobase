@@ -131,34 +131,26 @@
            (:identity.transition/revoked-grants (first datoms))))
     (is (zero? (:identity.epoch/initial-trust (second datoms))))))
 
-(deftest protected-read-is-returned-only-after-its-causal-receipt
+(deftest an-authority-decision-is-appended-atomically
+  ;; the read path that used to be exercised here is gone — `kotobase.
+  ;; governed-read` commits an ExecutionReceipt instead of a disclosure
+  ;; receipt that could answer one of the contract's eight fields. What this
+  ;; namespace still owns is authority decision persistence, which is a
+  ;; different subject and has no result to name
   (let [backend (local/local-store)
-        result (causal-store/read!
-                {:store backend
-                 :disclosure {:template receipt-template
-                              :expected-revision 0
-                              :receipt-cid-fn (constantly "bafy-disclosure")
-                              :at "2026-08-27T01:00:01Z"}
-                 :authorize! (fn [query]
-                               {:allowed? true
-                                :projection (set (:find query))
-                                :basis "bafy-basis"
-                                :policy-cid "bafy-authority-policy"})
-                 :schema classified-schema
-                 :grant {:granted #{:public :internal} :scopes #{}}
-                 :query invoice-query
-                 :evaluate! (fn [_ _]
-                              [{:invoice/id "INV-42"
-                                :invoice/amount 5000}])})
+        ack (causal-store/persist-decision!
+             backend
+             (assoc receipt-template
+                    :causal.receipt/id "bafy-decision"
+                    :causal.receipt/outcome {:outcome/status :pending}
+                    :causal.receipt/at "2026-09-02T01:00:01Z")
+             0)
         stored (get-in (local/snapshot backend)
                        [:streams causal-store/decision-stream 0])]
-    (is (= [{:invoice/id "INV-42" :invoice/amount 5000}]
-           (:rows result)))
-    (is (= "bafy-disclosure" (get-in result [:provenance :receipt-cid])))
-    (is (= :disclosed
-           (get-in stored [:causal.receipt/outcome :outcome/status])))
-    (is (= 1 (get-in stored [:causal.receipt/outcome :outcome/row-count])))
+    (is (true? (:receipt/durable? ack)))
+    (is (= "bafy-decision" (:receipt/cid ack)))
     (is (= ["claim:reader"] (:causal.receipt/claim-cids stored)))
+    (is (= :allow (get-in stored [:causal.receipt/decision :decision/status])))
     (is (not (contains? stored :credential/raw)))))
 
 (deftest persistence-and-authority-fail-closed
@@ -166,45 +158,16 @@
     (is (thrown? #?(:clj Exception :cljs js/Error)
                  (causal-store/identity-ledger
                   (non-transactional-store)))))
-  (testing "a challenge is evidence to gather, never permission to disclose"
-    (let [backend (local/local-store)
-          challenged (assoc receipt-template :causal.receipt/decision
-                            (assoc reader-decision :decision/status :challenge))]
-      (is (thrown? #?(:clj Exception :cljs js/Error)
-                   (causal-store/disclosure-receipt-sink
-                    backend
-                    {:template challenged
-                     :expected-revision 0
-                     :receipt-cid-fn (constantly "bafy-no")
-                     :at "2026-08-27T01:00:01Z"})))))
   (testing "raw credentials have no receipt slot"
+    ;; still a live path: a decision receipt is validated by
+    ;; `grant.causal-trust/receipt`, whose key set is exact
     (let [backend (local/local-store)]
       (is (thrown? #?(:clj Exception :cljs js/Error)
-                   (causal-store/disclosure-receipt-sink
+                   (causal-store/persist-decision!
                     backend
-                    {:template (assoc receipt-template :credential/raw "secret")
-                     :expected-revision 0
-                     :receipt-cid-fn (constantly "bafy-no")
-                     :at "2026-08-27T01:00:01Z"})))))
-  (testing "a capability for another resource is refused before evaluation"
-    (let [backend (local/local-store)
-          evaluated? (atom false)]
-      (is (thrown? #?(:clj Exception :cljs js/Error)
-                   (causal-store/read!
-                    {:store backend
-                     :disclosure
-                     {:template
-                      (assoc-in receipt-template
-                                [:causal.receipt/decision
-                                 :decision/runtime-capability-spec
-                                 :capability/resource]
-                                #{"INV-OTHER"})
-                      :expected-revision 0
-                      :receipt-cid-fn (constantly "bafy-no")
-                      :at "2026-08-27T01:00:01Z"}
-                     :authorize! (fn [_] nil)
-                     :schema classified-schema
-                     :grant {:granted #{:public :internal} :scopes #{}}
-                     :query invoice-query
-                     :evaluate! (fn [_ _] (reset! evaluated? true) [])})))
-      (is (false? @evaluated?)))))
+                    (assoc receipt-template
+                           :causal.receipt/id "bafy-no"
+                           :causal.receipt/outcome {:outcome/status :pending}
+                           :causal.receipt/at "2026-09-02T01:00:01Z"
+                           :credential/raw "secret")
+                    0))))))

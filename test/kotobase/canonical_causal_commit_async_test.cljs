@@ -4,6 +4,10 @@
             [kotobase.causal-commit :as causal]
             [kotobase.causal-trust-test :as fixture]
             [kotobase.core :as core]
+            [kotobase.evidence :as evidence]
+            [kotobase.execution-identity :as id]
+            [kotobase.governed-execution-test :as contract]
+            [kotobase.governed-read :as governed-read]
             [kotobase.guarded :as guarded]
             [kotobase.storage.memory :as memory]))
 
@@ -47,43 +51,52 @@
                      (-> (core/head db)
                          (.then #(is (nil? %))))))))))))))
 
-(defn- protected-read [db steps basis]
-  (let [template (-> fixture/receipt-template
-                     (assoc :causal.receipt/basis-cid basis)
-                     (assoc-in [:causal.receipt/decision
-                                :decision/trust-basis-cid]
-                               basis))
-        query (assoc-in fixture/invoice-query [:scope :basis] basis)]
-    (-> (causal/read!
-         {:database db
-          :disclosure {:template template
-                       :expected-basis-cid basis
-                       :receipt-cid-fn (constantly "bafy-worker-disclosure")
-                       :at "2026-08-27T02:00:00Z"}
-          :authorize!
-          (fn [_]
-            (swap! steps conj :model)
-            (js/Promise.resolve
-             {:allowed? true
-              :projection #{:invoice/id :invoice/amount}
-              :basis basis
-              :policy-cid "bafy-authority-policy"}))
-          :schema fixture/classified-schema
-          :grant {:granted #{:public :internal} :scopes #{}}
-          :query query
-          :evaluate!
-          (fn [_ _]
-            (swap! steps conj :evaluate)
-            (-> (core/q (core/at-cid db basis) ["INV-42" nil nil])
-                (.then
-                 (fn [stored]
-                   (let [values (into {} (map (juxt :p :o)) stored)]
-                     [{:invoice/id (get values "invoice/id")
-                       :invoice/amount
-                       (js/parseInt (get values "invoice/amount") 10)}])))))})
-        (.then #(assoc % ::basis basis)))))
+(defn- governed-read-request [db steps basis]
+  (let [query (assoc-in fixture/invoice-query [:scope :basis] basis)]
+    {:commit {:database db
+              :expected-basis-cid nil
+              :receipt-cid-fn (constantly "bafy-worker-execution")}
+     :authority-decision fixture/reader-decision
+     :request (assoc contract/request
+                     :principal "did:key:alice"
+                     :base/commit basis
+                     :query/digest (id/value-cid query))
+     :manifest (contract/resigned
+                (assoc contract/manifest :data/commit basis))
+     :authority {:now "2026-09-02T14:30:00Z"
+                 :epoch 7
+                 :consume-nonce! (fn [_] (js/Promise.resolve true))}
+     :value-cid id/value-cid
+     :verify (fn [request] (js/Promise.resolve (contract/verify request)))
+     :plan-digest (fn [compiled]
+                    (js/Promise.resolve (if compiled "bafy-plan" "bafy-none")))
+     :cost (fn [] (js/Promise.resolve {:dependent-hops 1 :requests 2
+                                       :bytes 512 :cache-profile :cold}))
+     :implementation/build "kotobase@worker-read"
+     :sign (fn [unsigned] (js/Promise.resolve (contract/proof unsigned)))
+     :authorize! (fn [q]
+                   (swap! steps conj :model)
+                   (js/Promise.resolve {:allowed? true
+                                        :projection (set (:find q))
+                                        :basis basis
+                                        :policy-cid "bafy-policy"}))
+     :schema fixture/classified-schema
+     :grant {:granted #{:public :internal} :scopes #{}}
+     :query query
+     :evaluate! (fn [_ _]
+                  (swap! steps conj :evaluate)
+                  (-> (core/q (core/at-cid db basis) ["INV-42" nil nil])
+                      (.then
+                       (fn [stored]
+                         (let [values (into {} (map (juxt :p :o)) stored)]
+                           [{:invoice/id (get values "invoice/id")
+                             :invoice/amount
+                             (js/parseInt (get values "invoice/amount")
+                                          10)}])))))}))
 
 (deftest worker-read-awaits-model-evaluator-and-canonical-receipt
+  ;; the disclosure read path this used to exercise is gone; `governed-read`
+  ;; is its successor and commits an ExecutionReceipt in its place
   (async done
     (let [db (database)
           steps (atom [])]
@@ -92,26 +105,21 @@
        (-> (core/commit-at!
             db nil [["INV-42" "invoice/id" "INV-42"]
                     ["INV-42" "invoice/amount" "5000"]])
-           (.then #(protected-read db steps %))
+           (.then #(governed-read/read-async!
+                    (governed-read-request db steps %)))
            (.then
             (fn [result]
               (swap! steps conj :returned)
               (is (= [:model :evaluate :returned] @steps))
               (is (= [{:invoice/id "INV-42" :invoice/amount 5000}]
                      (:rows result)))
-              (let [basis (::basis result)
-                    commit-cid (get-in result
-                                       [:provenance :receipt-commit-cid])]
-                (is (string? commit-cid))
-                (-> (causal/receipt-at db commit-cid "bafy-worker-disclosure")
-                    (.then (fn [proof] {:basis basis :proof proof}))))))
-           (.then
-            (fn [{:keys [basis proof]}]
-              (is (= basis (:receipt/basis-cid proof)))
-              (is (= :disclosed
-                     (get-in proof [:receipt/records 0
-                                    :causal.receipt/outcome
-                                    :outcome/status]))))))))))
+              (let [receipt (:execution/receipt result)]
+                (is (= #{} (evidence/missing :governed-execution receipt)))
+                (-> (causal/receipt-at
+                     db (get-in result [:provenance :receipt-commit-cid])
+                     "bafy-worker-execution")
+                    (.then (fn [proof]
+                             (is (= [receipt] (:receipt/records proof)))))))))))))) 
 
 (deftest worker-read-withholds-rows-when-receipt-persistence-rejects
   (async done

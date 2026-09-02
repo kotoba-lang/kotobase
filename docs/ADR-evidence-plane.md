@@ -43,10 +43,13 @@ still agree with themselves.
 |---|---|---|
 | `:governed-execution` | all eight | 0 |
 | `:code-graph-query` (receipt **with** its execution identity) | decision, result root, plan digest | 5 |
-| `:causal-disclosure`, served | decision | 7 |
-| `:causal-disclosure`, denied | decision, and that there is no result | 6 |
+| `:causal-decision` | decision, and — when denied — that there is no result | 7, or 6 |
 | `:code-graph-execution` | — | refused |
 | `:admission` | — | refused |
+
+A `:challenge` is refused too. It means evidence still to be gathered, and
+version 1 has an allow and a deny and no third; flattening it into either
+would be the same invention this rule exists to prevent.
 
 The last two are refused rather than mapped. A version 1 `ExecutionReceipt`
 binds one *query* execution at one immutable basis, and requires both a plan
@@ -75,28 +78,56 @@ is checked once.
 
 - "One evidence plane" is now a claim with a function behind it and a number
   attached to each plane, held by tests rather than by prose.
-- The disclosure plane's distance is mostly one field's worth of design: it
-  binds an evaluated **row count**, which is a fact about how many rows there
-  were and not about which ones, so it cannot answer `:result/root` for a
-  served read. That is the same gap `ADR-governed-execution` closed for the
-  governed path by handing the receipt sink the rows.
+- The measurement decided what to do next. A served disclosure answered one
+  field of eight; seven supplied is not evidence of an execution, and the fix
+  was never a better adapter. **The disclosure read path is now deleted** —
+  see the addendum below.
 - The adapter is exercised against a record `kotobase.causal-commit/read!`
   actually commits, not only against a fixture of one, so the measured
   distance is to the shape production writes.
 
+## Addendum: the disclosure read path is deleted
+
+`kotobase.causal-commit/read!`, `kotobase.causal-trust/read!`, both
+`disclosure-receipt-sink`s, `disclosure-plan`, `disclosure-receipt`,
+`disclosure-template-keys` and `require-query-capability!` are gone.
+`kotobase.governed-read` replaces them: it commits an ExecutionReceipt, which
+answers all eight fields, in place of a disclosure receipt, which answered
+one.
+
+Measured before deleting: no caller outside this repository's own tests, among
+the repositories checked out in this workspace. That is a bounded measurement,
+not a proof — an unchecked-out repository would not appear in it.
+
+**The retired path made two checks the contract does not describe**, and
+deleting a path together with its checks would have been a regression wearing
+a consolidation's clothes. Both moved into `governed-read`:
+
+- a trust decision that is not an allow is not permission to disclose. *A
+  challenge is evidence to gather.*
+- the runtime capability being exercised must be a read, for this tenant, over
+  exactly these resources.
+
+One got stronger on the way. The capability is now bound to the **signed
+envelope's** principal — the record whose digest the receipt names — where the
+retired path could only compare it to a receipt template handed in beside it.
+
+`governed-read` also has no `:commit!` option. Choosing a different sink is
+choosing a different evidence plane, and that should read as a call to
+`kotobase.governed-execution`, not as a parameter.
+
+What remains in `causal-commit` / `causal-trust` is authority decision and
+identity persistence — a different subject, with no result to name — which is
+why the plane is now called `:causal-decision`.
+
 ## What this does not do
 
-- **No plane was retired.** Every existing receipt is still written by the
-  code that wrote it before. What changed is that the distance to the contract
-  is measured and refusable, not that anything stopped.
-- **Lifting the legacy read path is not a fix for it.** Seven of eight fields
-  supplied means the disclosure receipt is not evidence of a version 1
-  execution; the fix is to route those reads through
-  `kotobase.governed-execution`, which produces the receipt directly. Adapting
-  harder would only move the invention from the adapter to its caller.
-- **A denial on the legacy path writes nothing at all.** Measured, not
-  assumed: the refusal happens at the gate, before the receipt sink, and the
-  block store does not grow. `governed-execution` commits a deny receipt
-  precisely so that being refused is not the cheapest way to leave no trace.
+- **Two planes remain unretired**, and neither is a query execution:
+  `code-graph`'s execution receipt and `admission`'s audit receipt. Covering
+  them means a versioned record for authorised effects, which is a decision
+  with a cost.
+- **The code-graph query receipt plane is not retired either.** It is
+  liftable, five fields short, and has its own CID and identity invariants;
+  moving it is separate work.
 - **Still no cross-protocol conformance suite.** Nothing yet runs one semantic
   request through two frontends and compares result roots.

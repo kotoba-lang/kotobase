@@ -4,7 +4,8 @@
   Four kinds of receipt were written before the execution contract existed:
 
   - `kotobase.causal-commit` / `kotobase.causal-trust` commit a **causal
-    disclosure receipt** for every guarded read;
+    authority decision receipt** — this used to include one per guarded read,
+    until `kotobase.governed-read` replaced that path;
   - `kotobase.code-graph` persists a **query receipt** bound to an execution
     identity, and an **execution receipt** for one artifact build;
   - `kotobase.admission` requires a durable **audit receipt** before any
@@ -49,7 +50,7 @@
 
 (def query-execution-planes
   "Planes whose records describe one query execution."
-  #{:causal-disclosure :code-graph-query :governed-execution})
+  #{:causal-decision :code-graph-query :governed-execution})
 
 (def effect-planes
   "Planes whose records describe an authorised effect, not a query.
@@ -78,18 +79,24 @@
 (defn- non-empty-string? [value]
   (and (string? value) (seq value)))
 
-(defn- causal-disclosure-carried
-  "What a committed causal disclosure receipt answers.
+(defn- causal-decision-carried
+  "What a committed causal authority decision receipt answers.
 
-  Only the decision, and — when it is a denial — that there is no result. The
-  disclosure binds an evaluated *row count*, which is a fact about how many
-  rows there were and not about which rows they were, so it cannot answer
-  `:result/root` for a served read."
+  Only the decision, and — when it is a denial — that there is no result. Its
+  outcome binds a row count when it binds anything at all, which is a fact
+  about how many rows there were and not about which rows they were, so it
+  cannot answer `:result/root` for a served read. That gap is why the read
+  path that wrote these is gone; what still writes them is authority
+  persistence, where there is no result to name.
+
+  A `:challenge` is neither an allow nor a deny — it is evidence still to be
+  gathered — and version 1 has no third decision, so it is refused rather than
+  flattened into one of the two."
   [record]
-  (when-not (map? record) (reject! :unreadable-source {:plane :causal-disclosure}))
+  (when-not (map? record) (reject! :unreadable-source {:plane :causal-decision}))
   (let [decision (get-in record [:causal.receipt/decision :decision/status])]
     (when-not (contains? #{:allow :deny} decision)
-      (reject! :unreadable-source {:plane :causal-disclosure
+      (reject! :unreadable-source {:plane :causal-decision
                                    :field :causal.receipt/decision}))
     (cond-> {:authority/decision decision}
       (= :deny decision) (assoc :result/root nil))))
@@ -136,7 +143,7 @@
   (select-keys record answerable))
 
 (def ^:private carriers
-  {:causal-disclosure causal-disclosure-carried
+  {:causal-decision causal-decision-carried
    :code-graph-query code-graph-query-carried
    :governed-execution governed-execution-carried})
 

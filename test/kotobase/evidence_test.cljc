@@ -18,10 +18,10 @@
                 (catch #?(:clj clojure.lang.ExceptionInfo
                           :cljs ExceptionInfo) e e))))
 
-(def disclosure
+(def decision
   "The shape `grant.causal-trust/receipt` validates and `kotobase.causal-commit`
   commits. Only the parts a lift can read are spelled out."
-  {:causal.receipt/id "bafy-disclosure"
+  {:causal.receipt/id "bafy-decision"
    :causal.receipt/decision {:decision/status :allow}
    :causal.receipt/outcome {:outcome/status :disclosed :outcome/row-count 1}})
 
@@ -66,37 +66,45 @@
     (is (empty? (set/intersection evidence/answerable
                                   evidence/adapter-supplied))))
   (testing "and the five planes are sorted into two subjects"
-    (is (= #{:causal-disclosure :code-graph-query :governed-execution}
+    (is (= #{:causal-decision :code-graph-query :governed-execution}
            evidence/query-execution-planes))
     (is (= #{:code-graph-execution :admission}
            (set (keys evidence/effect-planes))))))
 
-(deftest a-disclosure-receipt-answers-the-decision-and-almost-nothing-else
+(deftest a-decision-receipt-answers-the-decision-and-almost-nothing-else
   (testing "what it carries"
     (is (= {:authority/decision :allow}
-           (evidence/carried :causal-disclosure disclosure))))
+           (evidence/carried :causal-decision decision))))
   (testing "and what it cannot"
-    ;; the disclosure binds an evaluated row count, which is a fact about how
-    ;; many rows there were rather than which ones, so it cannot name a result
+    ;; the outcome binds a row count when it binds anything, which is a fact
+    ;; about how many rows there were rather than which ones — and an
+    ;; authority decision has no result to name in the first place
     (is (= #{:request/digest :execution/manifest :query/plan-digest
              :result/root :cost :implementation/build :signature}
-           (evidence/missing :causal-disclosure disclosure))))
+           (evidence/missing :causal-decision decision))))
   (testing "a denial does carry that there is no result"
-    (let [denied (assoc disclosure :causal.receipt/decision
+    (let [denied (assoc decision :causal.receipt/decision
                         {:decision/status :deny})]
       (is (= {:authority/decision :deny :result/root nil}
-             (evidence/carried :causal-disclosure denied)))
-      (is (not (contains? (evidence/missing :causal-disclosure denied)
+             (evidence/carried :causal-decision denied)))
+      (is (not (contains? (evidence/missing :causal-decision denied)
                           :result/root)))))
   (testing "and a record whose decision cannot be read is not lifted"
     (is (= :unreadable-source
-           (reason #(evidence/carried :causal-disclosure
-                                      (assoc disclosure
+           (reason #(evidence/carried :causal-decision
+                                      (assoc decision
                                              :causal.receipt/decision
-                                             {:decision/status :maybe})))))))
+                                             {:decision/status :maybe})))))
+    ;; a challenge is evidence still to be gathered, and version 1 has an
+    ;; allow and a deny and no third
+    (is (= :unreadable-source
+           (reason #(evidence/carried :causal-decision
+                                      (assoc decision
+                                             :causal.receipt/decision
+                                             {:decision/status :challenge})))))))
 
 (deftest a-query-receipt-is-read-with-the-identity-that-binds-it
-  (testing "the pair answers three fields the disclosure cannot"
+  (testing "the pair answers three fields a decision receipt cannot"
     (is (= {:authority/decision :allow
             :result/root "bafy-result"
             :query/plan-digest "bafy-plan"}
@@ -129,7 +137,7 @@
                                "bafy-other")))))))
 
 (deftest a-lift-is-exactly-as-complete-as-the-supplement-it-demands
-  (doseq [[plane source] [[:causal-disclosure disclosure]
+  (doseq [[plane source] [[:causal-decision decision]
                           [:code-graph-query code-graph-source]]]
     (let [supplement (supplement-for plane source)
           lifted (evidence/lift plane source supplement)]
