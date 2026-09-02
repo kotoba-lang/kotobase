@@ -56,16 +56,14 @@
   bytes and the number of times the caller had to wait for an answer before
   it could ask the next question — leaving only `:cache-profile` as the
   caller's word, which that namespace marks rather than measures."
-  (:require [kotobase.execution-contract :as contract]
+  (:require [kotobase.authority-window :as window]
+            [kotobase.execution-contract :as contract]
             [kotobase.guarded :as guarded]))
 
 (def ^:private execute-keys
   #{:request :manifest :authority :value-cid :verify
     :plan-digest :cost :implementation/build :sign :commit!
     :authorize! :schema :grant :query :evaluate!})
-
-(def ^:private authority-keys
-  #{:now :epoch :consume-nonce!})
 
 (defn- reject! [reason data]
   (throw (ex-info "governed execution rejected"
@@ -78,28 +76,12 @@
   (or (non-empty-string? value)
       (and (coll? value) (seq value))))
 
-(def ^:private rfc3339
-  ;; UTC, second precision, optional fraction. Deliberately narrow: this
-  ;; namespace compares instants as strings, and a string comparison is only
-  ;; an instant comparison inside one exact format. Offsets, lower-case `z`,
-  ;; and absent seconds are refused rather than approximated.
-  #"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?Z$")
+(def instant-key
+  "Re-exported from `kotobase.authority-window`, which owns the comparison.
 
-(defn instant-key
-  "Return an order-preserving key for one RFC-3339 UTC instant, or nil.
-
-  The fraction is padded to nine digits because the naive comparison is wrong
-  exactly where it matters: `\"…:00Z\"` sorts *after* `\"…:00.5Z\"`, so an
-  unpadded compare reads a request that expires half a second later as having
-  already expired."
-  [value]
-  (when (string? value)
-    (when-let [[_ seconds fraction] (re-matches rfc3339 value)]
-      (str seconds "."
-           (apply str (take 9 (concat (or fraction "") (repeat \0))))))))
-
-(defn- before? [left right]
-  (neg? (compare left right)))
+  Kept here because callers and tests already name it and because the padding
+  it does is the reason an expiry check is not a string compare."
+  window/instant-key)
 
 (def ^:private probe
   ;; two values that differ, and one of the two written in a different entry
@@ -145,44 +127,15 @@
   options)
 
 (defn- timing!
-  "Decide expiry, manifest validity, and epoch currency; return the ledger.
-
-  The nonce ledger is returned rather than used here so that a request already
-  refused on time does not consume a nonce."
+  "Decide expiry, manifest validity and epoch currency; return the ledger."
   [{:keys [request manifest authority]}]
-  (when-not (and (map? authority) (= authority-keys (set (keys authority))))
-    (reject! :invalid-authority
-             {:keys (when (map? authority) (set (keys authority)))}))
-  (let [{:keys [now epoch consume-nonce!]} authority
-        now-key (instant-key now)
-        expires-key (instant-key (:expires-at request))
-        issued-key (instant-key (:issued-at manifest))]
-    (when-not now-key (reject! :invalid-now {:now now}))
-    (when-not expires-key
-      (reject! :invalid-expiry {:expires-at (:expires-at request)}))
-    (when-not issued-key
-      (reject! :invalid-issued-at {:issued-at (:issued-at manifest)}))
-    (when-not (nat-int? epoch) (reject! :invalid-current-epoch {}))
-    (when-not (ifn? consume-nonce!) (reject! :missing-nonce-ledger {}))
-    (when-not (before? now-key expires-key)
-      (reject! :request-expired {:now now :expires-at (:expires-at request)}))
-    (when (before? now-key issued-key)
-      (reject! :manifest-not-yet-issued
-               {:now now :issued-at (:issued-at manifest)}))
-    (when-not (= epoch (:authority/epoch request))
-      ;; the request names an epoch and the host names the current one. A
-      ;; request signed under a superseded epoch is refused, not reinterpreted
-      (reject! :authority-epoch-revoked
-               {:request-epoch (:authority/epoch request)
-                :current-epoch epoch}))
-    consume-nonce!))
+  (window/open! {:authority authority
+                 :expires-at (:expires-at request)
+                 :epoch (:authority/epoch request)
+                 :not-before (:issued-at manifest)}))
 
 (defn- nonce-verdict! [request verdict]
-  (when-not (true? verdict)
-    ;; anything that is not literally `true` is a replay: a ledger that could
-    ;; not answer has not said the nonce is fresh
-    (reject! :nonce-replayed {:nonce (:nonce request)}))
-  true)
+  (window/spent! (:nonce request) verdict))
 
 (defn- signature-request
   "What the host is asked to verify: a record's address, its proof, and the

@@ -133,6 +133,15 @@
   (contract/validate-receipt! record)
   (select-keys record (answerable :query-execution)))
 
+(defn- governed-effect-carried
+  "A receipt this repository already produced under the effect contract.
+
+  It answers everything, so its supplement is empty — the same closing
+  measurement `:governed-execution` provides for the other subject."
+  [record]
+  (effect/validate-receipt! record)
+  (select-keys record (answerable :authorised-effect)))
+
 (defn- admission-carried
   "What an admission decision answers about the effect it admitted.
 
@@ -192,6 +201,8 @@
    :code-graph-query {:subject :query-execution :carry code-graph-query-carried}
    :governed-execution {:subject :query-execution
                         :carry governed-execution-carried}
+   :governed-effect {:subject :authorised-effect
+                     :carry governed-effect-carried}
    :admission {:subject :authorised-effect :carry admission-carried}
    :code-graph-execution {:subject :authorised-effect
                           :carry code-graph-execution-carried}})

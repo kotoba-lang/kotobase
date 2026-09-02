@@ -35,9 +35,14 @@
   (:require [clojure.set :as set]))
 
 (def roles
-  "Which authority signs which record."
+  "Which authority signs which record.
+
+  An EffectReceipt is signed by whatever ran the effect, which is the same
+  role as the one that ran a query:  is about what performed the
+  work, not about which contract the record belongs to."
   {:execution-manifest :issuer
-   :execution-receipt :executor})
+   :execution-receipt :executor
+   :effect-receipt :executor})
 
 (def signature-keys
   "Exactly the fields of a version 1 signature envelope."

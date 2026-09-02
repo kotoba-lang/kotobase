@@ -116,6 +116,7 @@
                            (catch #?(:clj clojure.lang.ExceptionInfo
                                      :cljs ExceptionInfo) e e)))]
     (or (:kotobase.governed-execution/reason data)
+        (:kotobase.authority-window/reason data)
         (:kotobase.guarded/reason data)
         (:kotobase.query/reason data))))
 
