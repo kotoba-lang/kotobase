@@ -14,6 +14,14 @@ remain compatibility and migration surfaces only. See
 The document/stream `kotobase.store/IStore` section below is a legacy
 compatibility surface; new database backends must not target it.
 
+Every governed cross-protocol execution can be closed by the versioned
+`ExecutionManifest`, `RequestEnvelope`, and `ExecutionReceipt` records in
+`kotobase.execution-contract`. They bind an exact data commit, policy snapshot,
+revocation epoch, semantic query digest, request digest, result root, and
+measured cost without making one query language, wire codec, mutable head, or
+storage provider canonical. Validation is exact and fail closed; see
+[`docs/ADR-execution-contract.md`](docs/ADR-execution-contract.md).
+
 `kotobase.causal-commit` is the canonical causal-identity adapter. It commits
 identity transitions, LLM/model/agent decisions, and protected-read receipts
 against an exact immutable basis CID without consulting or publishing a
