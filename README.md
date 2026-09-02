@@ -40,6 +40,16 @@ authority decision. `kotobase.causal-commit/execution-receipt-sink` is the
 canonical-CID implementation of that commit: it writes at an exact immutable
 basis and rereads the record before acknowledging.
 
+`kotobase.evidence` is the one plane those receipts are compared on. It lifts
+a source plane's record onto a version 1 `ExecutionReceipt` under a rule it
+cannot break — the supplement must be exactly the fields the source does not
+carry, so laundering a field the source answers and omitting one it does not
+are both refused — which makes the distance from each plane to the contract a
+number rather than a claim. Effect admissions and artifact builds are refused
+rather than mapped: they are not query executions, and version 1 requires a
+plan digest and a result root. See
+[`docs/ADR-evidence-plane.md`](docs/ADR-evidence-plane.md).
+
 `kotobase.causal-commit` is the canonical causal-identity adapter. It commits
 identity transitions, LLM/model/agent decisions, and protected-read receipts
 against an exact immutable basis CID without consulting or publishing a

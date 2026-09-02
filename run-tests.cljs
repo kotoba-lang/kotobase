@@ -26,6 +26,7 @@
             [kotobase.classification-test]
             [kotobase.code-graph-test]
             [kotobase.erasure-test]
+            [kotobase.evidence-test]
             [kotobase.execution-contract-test]
             [kotobase.governed-execution-test]
             [kotobase.guarded-test]
