@@ -60,6 +60,15 @@ return only after the ExecutionReceipt has been committed and read back. It
 replaces the disclosure read path, which committed a receipt that answered one
 of the contract's eight fields.
 
+`kotobase.conformance` checks the contract's stated purpose instead of
+asserting it: given the receipts and rows from two or more frontends handed
+the same request, it refuses unless they agree about the request and about the
+answer, while permitting the plan digest, cost, build and signature to differ.
+It also reports what it found on the way — a result root is the address of the
+rows *as served*, so two conformant frontends serving the same multiset in
+different orders produce different roots, and comparing frontends by that
+field is asking the wrong question.
+
 `kotobase.execution-keys` answers *which* key, not just whether some key
 signed. A signature names the key that made it, and the verifier refuses it
 unless a registry says that key id, under that algorithm, was authorised to

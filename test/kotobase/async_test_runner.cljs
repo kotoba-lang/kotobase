@@ -1,6 +1,7 @@
 (ns kotobase.async-test-runner
   (:require [cljs.test :as t]
             [kotobase.canonical-causal-commit-async-test]
+            [kotobase.conformance-test]
             [kotobase.effect-contract-test]
             [kotobase.evidence-test]
             [kotobase.execution-keys-test]
@@ -18,6 +19,7 @@
 
 (defn -main []
   (t/run-tests 'kotobase.canonical-causal-commit-async-test
+               'kotobase.conformance-test
                'kotobase.effect-contract-test
                'kotobase.evidence-test
                'kotobase.execution-keys-test

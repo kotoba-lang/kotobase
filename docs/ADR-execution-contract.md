@@ -56,3 +56,26 @@ Validation is fail closed:
 The caller that produces these records, and the runtime authority checks this
 module cannot make, are in
 [`ADR-governed-execution.md`](ADR-governed-execution.md).
+
+## Addendum: a result root is not the identity of an answer
+
+Measured by `kotobase.conformance`, which exists to check the first
+consequence above rather than assert it.
+
+`:result/root` is the address of the rows **as served**, and an address is
+order sensitive. The admitted query grammar
+(`kotobase.authorized-query/query-keys`) has no ordering clause, so the answer
+to any query this repository can express is a **multiset** — and two
+conformant frontends may serve it in different orders and produce different
+result roots. Neither is wrong.
+
+So the root answers *what was served to whom*, which is what an audit needs.
+It is **not** the identity of the answer across frontends. Comparing frontends
+by it is asking the wrong question, and `kotobase.conformance` computes a
+separate canonical result address over the sorted multiset for that purpose,
+reporting order divergence rather than hiding it.
+
+This canonicalisation is lossless only while no query can ask for an order. If
+an ordering clause is ever admitted, the answer to such a query stops being a
+multiset; `conformance/ordered-query?` is a predicate rather than a constant
+so that the decision has somewhere to be taken.
