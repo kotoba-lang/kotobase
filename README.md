@@ -45,8 +45,10 @@ a source plane's record onto a version 1 `ExecutionReceipt` under a rule it
 cannot break — the supplement must be exactly the fields the source does not
 carry, so laundering a field the source answers and omitting one it does not
 are both refused — which makes the distance from each plane to the contract a
-number rather than a claim. Effect admissions and artifact builds are evidence
-of a different subject — they have no query plan and no served result — so
+number rather than a claim. A library that writes its own records
+defines its own plane and hands it in, because a carrier for records written
+elsewhere could only live here as a copy of their shape. Effect admissions and
+artifact builds are evidence of a different subject — they have no query plan and no served result — so
 they lift onto `kotobase.effect-contract`, which binds an action, a resource,
 the code lock the bytes were admitted under and the effects granted. Both
 contracts share one vocabulary, so two subjects do not mean two languages. See

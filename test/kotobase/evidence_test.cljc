@@ -1,7 +1,6 @@
 (ns kotobase.evidence-test
   (:require [clojure.set :as set]
             [clojure.test :refer [deftest is testing]]
-            [kotobase.code-graph :as code-graph]
             [kotobase.effect-contract :as effect]
             [kotobase.evidence :as evidence]
             [kotobase.execution-contract :as contract]
@@ -26,26 +25,21 @@
    :causal.receipt/decision {:decision/status :allow}
    :causal.receipt/outcome {:outcome/status :disclosed :outcome/row-count 1}})
 
-(def query-receipt
-  {:cid "bafy-query-receipt"
-   :block {}
-   :execution-identity-cid "bafy-identity"
-   :query-cid "bafy-query"
-   :result-cid "bafy-result"
-   :basis "bafy-basis"
-   :policy-cid "bafy-policy"
-   :tenant "acme"
-   :purpose :payment-review
-   :resource-cids ["bafy-invoice"]})
+(def code-graph-query
+  "A plane this repository does not own, defined by its caller.
 
-(def execution-identity
-  {:plan-cid "bafy-plan"
-   :db-basis "bafy-basis"
-   :policy-cid "bafy-policy"
-   :host-receipt-cids ["bafy-query-receipt"]})
+  `kotoba-lang/code-graph` depends on this repository, so a carrier for its
+  records cannot live here — it would be either a dependency cycle or a copy
+  of a shape, and a copy of a shape is what this namespace exists to stop
+  being necessary. What is exercised here is the extension point: the same
+  lift rule, applied to a plane defined outside the registry."
+  {:subject :query-execution
+   :carry (fn [{:keys [result-cid plan-cid]}]
+            {:authority/decision :allow
+             :result/root result-cid
+             :query/plan-digest plan-cid})})
 
-(def code-graph-source
-  {:receipt query-receipt :execution-identity execution-identity})
+(def foreign-source {:result-cid "bafy-result" :plan-cid "bafy-plan"})
 
 (defn- supplement-for [plane source]
   (select-keys {:request/digest "bafy-request"
@@ -75,6 +69,18 @@
    :admission/granted #{:object/read}
    :admission/missing #{}})
 
+(def build-plane
+  "The other plane `kotoba-lang/code-graph` owns, defined by its caller."
+  {:subject :authorised-effect
+   :carry (fn [record]
+            {:authority/decision :allow
+             :effect/action :build
+             :effect/resource (:artifact-cid record)
+             :code/lock (:package-lock-cid record)
+             :effect/granted (:granted-effects record)
+             :authority/policy (:policy-cid record)
+             :outcome/roots (:output-root-cids record)})})
+
 (def build-receipt
   {:cid "bafy-execution"
    :artifact-cid "bafy-artifact"
@@ -93,13 +99,13 @@
                                (get evidence/adapter-supplied subject))))
       (is (empty? (set/intersection (evidence/answerable subject)
                                     (get evidence/adapter-supplied subject))))))
-  (testing "and every plane is sorted into one of the two subjects"
+  (testing "and every plane written here is sorted into one of the two"
+    ;; only the planes this repository writes. `kotoba-lang/code-graph`
+    ;; depends on this one and registers its own
     (is (= {:causal-decision :query-execution
-            :code-graph-query :query-execution
             :governed-execution :query-execution
             :governed-effect :authorised-effect
-            :admission :authorised-effect
-            :code-graph-execution :authorised-effect}
+            :admission :authorised-effect}
            (update-vals evidence/planes :subject))))
   (testing "and a plane nobody has written an adapter for is not silently empty"
     (is (= :unknown-plane (reason #(evidence/lift :something-else {} {}))))
@@ -137,44 +143,36 @@
                                              :causal.receipt/decision
                                              {:decision/status :challenge})))))))
 
-(deftest a-query-receipt-is-read-with-the-identity-that-binds-it
-  (testing "the pair answers three fields a decision receipt cannot"
+(deftest a-plane-may-be-defined-by-whoever-writes-its-records
+  (testing "an explicit definition works exactly like a registered one"
+    (is (= :query-execution (evidence/subject code-graph-query)))
     (is (= {:authority/decision :allow
             :result/root "bafy-result"
             :query/plan-digest "bafy-plan"}
-           (evidence/carried :code-graph-query code-graph-source)))
+           (evidence/carried code-graph-query foreign-source)))
     (is (= #{:request/digest :execution/manifest :cost
              :implementation/build :signature}
-           (evidence/missing :code-graph-query code-graph-source))))
-  (testing "and the fixture is the shape the write path actually enforces"
-    ;; derived from `code-graph`, so a receipt that gains or loses a field
-    ;; breaks this rather than drifting away from it silently
-    (is (= code-graph/query-receipt-keys (set (keys query-receipt)))))
-  (testing "an identity that does not bind this receipt is two records"
-    (is (= :receipt-not-bound-by-identity
-           (reason #(evidence/carried
-                     :code-graph-query
-                     (assoc-in code-graph-source
-                               [:execution-identity :host-receipt-cids]
-                               ["bafy-somebody-else"]))))))
-  (testing "and a pair that disagrees is not one execution"
-    (is (= :basis-mismatch
-           (reason #(evidence/carried
-                     :code-graph-query
-                     (assoc-in code-graph-source
-                               [:execution-identity :db-basis] "bafy-other")))))
-    (is (= :policy-mismatch
-           (reason #(evidence/carried
-                     :code-graph-query
-                     (assoc-in code-graph-source
-                               [:execution-identity :policy-cid]
-                               "bafy-other")))))))
+           (evidence/missing code-graph-query foreign-source))))
+  (testing "and it is checked as exactly as a registered one"
+    ;; a definition that can be handed in is a place a wrong subject could be
+    ;; handed in with it
+    (is (= :unknown-subject
+           (reason #(evidence/carried (assoc code-graph-query :subject :other)
+                                      foreign-source))))
+    (is (= :missing-carrier
+           (reason #(evidence/carried (assoc code-graph-query :carry nil)
+                                      foreign-source))))
+    (is (= :invalid-plane
+           (reason #(evidence/carried (dissoc code-graph-query :carry)
+                                      foreign-source))))
+    (is (= :invalid-plane (reason #(evidence/carried "code-graph-query" {}))))
+    (is (= :unknown-plane (reason #(evidence/carried :something-else {}))))))
 
 (deftest a-lift-is-exactly-as-complete-as-the-supplement-it-demands
   (doseq [[plane source] [[:causal-decision decision]
-                          [:code-graph-query code-graph-source]
+                          [code-graph-query foreign-source]
                           [:admission admission-decision]
-                          [:code-graph-execution build-receipt]]]
+                          [build-plane build-receipt]]]
     (let [supplement (supplement-for plane source)
           lifted (evidence/lift plane source supplement)]
       (testing (str plane " lifts into a valid version 1 record")
@@ -216,9 +214,9 @@
                                              :bytes 0 :cache-profile :cold}})))))))
 
 (deftest an-authorised-effect-is-evidence-of-a-different-subject
-  ;; not refused any more, and not mapped onto a query execution either: an
-  ;; admission has no plan digest and no served result, so it lifts onto the
-  ;; contract that binds an action, a resource and the code lock it ran under
+  ;; not refused, and not mapped onto a query execution either: an admission
+  ;; has no plan digest and no served result, so it lifts onto the contract
+  ;; that binds an action, a resource and the code lock it ran under
   (testing "an admission answers five fields and owes an outcome"
     (is (= {:authority/decision :allow
             :effect/action :execute
@@ -236,24 +234,10 @@
       (is (= [] (:outcome/roots (evidence/carried :admission refused))))
       (is (not (contains? (evidence/missing :admission refused)
                           :outcome/roots)))))
-  (testing "and a build answers what its existence means"
-    ;; `:build` and `:allow` are constants for the same reason the query
-    ;; receipt's decision is one: the record exists only because an artifact
-    ;; was built from an admitted code graph
-    (is (= {:authority/decision :allow
-            :effect/action :build
-            :effect/resource "bafy-artifact"
-            :code/lock "bafy-lock"
-            :effect/granted #{:object/read}
-            :authority/policy "bafy-policy"
-            :outcome/roots ["bafy-output"]}
-           (evidence/carried :code-graph-execution build-receipt))))
+  (testing "and a build, on the plane its own repository defines"
+    (is (= 5 (count (evidence/missing build-plane build-receipt)))))
   (testing "a record missing what the plane is supposed to have is not lifted"
     (is (= :unreadable-source
            (reason #(evidence/carried :admission
                                       (dissoc admission-decision
-                                              :admission/package-lock-cid)))))
-    (is (= :unreadable-source
-           (reason #(evidence/carried :code-graph-execution
-                                      (assoc build-receipt :output-root-cids
-                                             [])))))))
+                                              :admission/package-lock-cid)))))))

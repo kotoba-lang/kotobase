@@ -5,8 +5,10 @@
 
   - `kotobase.causal-commit` / `kotobase.causal-trust` commit a **causal
     authority decision receipt**;
-  - `kotobase.code-graph` persists a **query receipt** bound to an execution
-    identity, and an **execution receipt** for one artifact build;
+  - `kotoba-lang/code-graph` persists a **query receipt** bound to an
+    execution identity, and an **execution receipt** for one artifact build —
+    in *that* repository, which depends on this one, so it registers those
+    planes itself (see the last section of this docstring);
   - `kotobase.admission` requires a durable **audit receipt** before any
     effect thunk runs.
 
@@ -35,7 +37,19 @@
 
   Both contracts share a vocabulary on purpose — policy snapshot, revocation
   epoch, request digest, cost, implementation build, signature — so two
-  subjects do not mean two languages."
+  subjects do not mean two languages.
+
+  ## Planes this repository does not own
+
+  `planes` lists the planes whose records are written *here*. A library that
+  writes its own records registers its own plane definition and passes it to
+  `carried` / `missing` / `lift`, which take either a registered keyword or a
+  `{:subject … :carry …}` map.
+
+  This is not an extension point for its own sake. `kotoba-lang/code-graph`
+  depends on this repository, so a carrier for its records cannot live here
+  without either a dependency cycle or a copy of its shape — and a copy of a
+  shape is the thing this namespace exists to stop being necessary."
   (:require [clojure.set :as set]
             [kotobase.effect-contract :as effect]
             [kotobase.execution-contract :as contract]))
@@ -92,37 +106,6 @@
     (cond-> {:authority/decision decision}
       (= :deny decision) (assoc :result/root nil))))
 
-(defn- code-graph-query-carried
-  "What a code-graph query receipt answers, read with its execution identity.
-
-  The identity is not optional: the receipt has a result CID but the plan CID
-  lives on the identity that binds it, and the binding is what makes the pair
-  one execution rather than two records that mention the same basis. The write
-  path checks this too; it is checked again here because a record only its
-  author ever checked is checked once."
-  [{:keys [receipt execution-identity] :as source}]
-  (when-not (and (map? source)
-                 (= #{:receipt :execution-identity} (set (keys source)))
-                 (map? receipt) (map? execution-identity))
-    (reject! :unreadable-source {:plane :code-graph-query}))
-  (when-not (contains? (set (:host-receipt-cids execution-identity))
-                       (:cid receipt))
-    (reject! :receipt-not-bound-by-identity
-             {:receipt-cid (:cid receipt)}))
-  (when-not (= (:basis receipt) (:db-basis execution-identity))
-    (reject! :basis-mismatch {:receipt (:basis receipt)
-                              :identity (:db-basis execution-identity)}))
-  (when-not (= (:policy-cid receipt) (:policy-cid execution-identity))
-    (reject! :policy-mismatch {:receipt (:policy-cid receipt)
-                               :identity (:policy-cid execution-identity)}))
-  (when-not (and (non-empty-string? (:result-cid receipt))
-                 (non-empty-string? (:plan-cid execution-identity)))
-    (reject! :unreadable-source {:plane :code-graph-query}))
-  ;; a query receipt exists only for a read that was authorised and served
-  {:authority/decision :allow
-   :result/root (:result-cid receipt)
-   :query/plan-digest (:plan-cid execution-identity)})
-
 (defn- governed-execution-carried
   "A receipt this repository already produced under the execution contract.
 
@@ -170,54 +153,47 @@
              :effect/granted (:admission/granted record)}
       (not allowed?) (assoc :outcome/roots []))))
 
-(defn- code-graph-execution-carried
-  "What a code-graph execution receipt answers about the build it recorded.
-
-  The action is a constant for the same reason the query receipt's decision is
-  one: the record exists only because an artifact was built from an admitted
-  code graph, so `:build` and `:allow` are what its existence means rather
-  than fields it forgot to carry. Its output roots are the outcome."
-  [record]
-  (when-not (and (map? record)
-                 (non-empty-string? (:artifact-cid record))
-                 (non-empty-string? (:package-lock-cid record))
-                 (non-empty-string? (:policy-cid record))
-                 (set? (:granted-effects record))
-                 (vector? (:output-root-cids record))
-                 (seq (:output-root-cids record))
-                 (every? non-empty-string? (:output-root-cids record)))
-    (reject! :unreadable-source {:plane :code-graph-execution}))
-  {:authority/decision :allow
-   :effect/action :build
-   :effect/resource (:artifact-cid record)
-   :code/lock (:package-lock-cid record)
-   :effect/granted (:granted-effects record)
-   :authority/policy (:policy-cid record)
-   :outcome/roots (:output-root-cids record)})
-
 (def planes
-  "Every plane this repository writes, and what its records are evidence of."
+  "Every plane whose records are written in this repository."
   {:causal-decision {:subject :query-execution :carry causal-decision-carried}
-   :code-graph-query {:subject :query-execution :carry code-graph-query-carried}
    :governed-execution {:subject :query-execution
                         :carry governed-execution-carried}
    :governed-effect {:subject :authorised-effect
                      :carry governed-effect-carried}
-   :admission {:subject :authorised-effect :carry admission-carried}
-   :code-graph-execution {:subject :authorised-effect
-                          :carry code-graph-execution-carried}})
+   :admission {:subject :authorised-effect :carry admission-carried}})
+
+(defn definition
+  "Resolve PLANE: a registered keyword, or a `{:subject … :carry …}` map.
+
+  A library that writes its own records supplies the map. It is checked as
+  exactly as a registered one, because a plane definition that can be handed
+  in is a place a wrong subject could be handed in with it."
+  [plane]
+  (cond
+    (keyword? plane)
+    (or (get planes plane)
+        (reject! :unknown-plane {:plane plane :known (set (keys planes))}))
+
+    (and (map? plane) (= #{:subject :carry} (set (keys plane))))
+    (do (when-not (contains? subjects (:subject plane))
+          (reject! :unknown-subject {:subject (:subject plane)
+                                     :known (set (keys subjects))}))
+        (when-not (ifn? (:carry plane))
+          (reject! :missing-carrier {}))
+        plane)
+
+    :else
+    (reject! :invalid-plane {:plane plane})))
 
 (defn subject
   "Which contract PLANE's records are evidence under."
   [plane]
-  (or (get-in planes [plane :subject])
-      (reject! :unknown-plane {:plane plane :known (set (keys planes))})))
+  (:subject (definition plane)))
 
 (defn carried
-  "The version 1 fields SOURCE actually answers, on the named PLANE."
+  "The version 1 fields SOURCE actually answers, on PLANE."
   [plane source]
-  (subject plane)
-  ((get-in planes [plane :carry]) source))
+  ((:carry (definition plane)) source))
 
 (defn missing
   "The fields SOURCE cannot answer — the supplement `lift` demands.
