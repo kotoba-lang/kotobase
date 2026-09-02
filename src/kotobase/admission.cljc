@@ -41,26 +41,60 @@
      :admission/granted granted
      :admission/missing missing}))
 
+(defn- durable-audit? [audit-ack]
+  (and (map? audit-ack)
+       (true? (:audit/durable? audit-ack))
+       (string? (:audit/receipt-id audit-ack))
+       (seq (:audit/receipt-id audit-ack))))
+
+(defn- admitted!
+  "Refuse unless the audit is durable and the decision allows the effect.
+
+  Split out so the Promise-aware path below decides the same way rather than
+  deciding again: an audit rule that exists in two places has two behaviours
+  as soon as one of them is edited."
+  [decision audit-ack effect]
+  (when-not (durable-audit? audit-ack)
+    (throw (ex-info "authorization audit persistence failed"
+                    {:type :kotobase/audit-denied
+                     :decision decision})))
+  (when-not (:admission/allowed? decision)
+    (throw (ex-info "content authorization denied"
+                    {:type :kotobase/admission-denied
+                     :decision decision
+                     :audit audit-ack})))
+  (when-not (ifn? effect)
+    (throw (ex-info "authorized effect missing"
+                    {:type :kotobase/effect-missing})))
+  true)
+
 (defn guard!
   "Audit the authorization decision before invoking EFFECT.
    AUDIT! must return a durable receipt acknowledgement."
   [{:keys [audit! effect] :as request}]
   (let [decision (decide request)
-        audit-ack (when (ifn? audit!) (audit! decision))
-        audit-ok? (and (map? audit-ack)
-                       (true? (:audit/durable? audit-ack))
-                       (string? (:audit/receipt-id audit-ack))
-                       (seq (:audit/receipt-id audit-ack)))]
-    (when-not audit-ok?
-      (throw (ex-info "authorization audit persistence failed"
-                      {:type :kotobase/audit-denied
-                       :decision decision})))
-    (when-not (:admission/allowed? decision)
-      (throw (ex-info "content authorization denied"
-                      {:type :kotobase/admission-denied
-                       :decision decision
-                       :audit audit-ack})))
-    (when-not (ifn? effect)
-      (throw (ex-info "authorized effect missing"
-                      {:type :kotobase/effect-missing})))
+        audit-ack (when (ifn? audit!) (audit! decision))]
+    (admitted! decision audit-ack effect)
     {:decision decision :audit audit-ack :result (effect decision)}))
+
+#?(:cljs
+   (defn guard-async!
+     "The Worker path. AUDIT! and EFFECT may each return a Promise.
+
+     The effect is not invoked while the audit acknowledgement is still in
+     flight — an unawaited Promise is truthy, and a rule that admits one has
+     admitted every effect whose audit had not landed yet."
+     [{:keys [audit! effect] :as request}]
+     (try
+       (let [decision (decide request)]
+         (-> (js/Promise.resolve (when (ifn? audit!) (audit! decision)))
+             (.then
+              (fn [audit-ack]
+                (admitted! decision audit-ack effect)
+                (-> (js/Promise.resolve (effect decision))
+                    (.then (fn [result]
+                             {:decision decision
+                              :audit audit-ack
+                              :result result})))))))
+       (catch :default error
+         (js/Promise.reject error)))))

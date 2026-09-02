@@ -98,35 +98,51 @@
     (reject! :effect-named-no-outcome {}))
   produced)
 
+(defn- unsigned-receipt
+  [{:keys [request value-cid] :as options} decision roots cost]
+  {:effect/version contract/version
+   :request/digest (value-cid request)
+   :authority/policy (:authority/policy request)
+   :authority/epoch (:authority/epoch request)
+   :effect/action (:effect/action request)
+   :effect/resource (:effect/resource request)
+   :code/lock (:code/lock request)
+   :effect/granted (:admission/granted decision)
+   :authority/decision (if (:admission/allowed? decision) :allow :deny)
+   :outcome/roots roots
+   :cost cost
+   :implementation/build (:implementation/build options)})
+
+(defn- verification-request [{:keys [request value-cid]} unsigned proof]
+  {:record :effect-receipt
+   :payload-cid (value-cid unsigned)
+   :signature proof
+   :tenant (:tenant request)
+   :epoch (:authority/epoch request)})
+
+(defn- verified! [verdict]
+  (when-not (true? verdict)
+    (reject! :signature-not-verified {:record :effect-receipt}))
+  true)
+
+(defn- checked-proof [proof]
+  (when-not (non-empty-proof? proof)
+    (reject! :invalid-signature {}))
+  proof)
+
+(defn- validated! [{:keys [request value-cid]} signed]
+  (contract/validate-effect! {:request request
+                              :request-digest (value-cid request)
+                              :receipt signed})
+  signed)
+
 (defn- signed-receipt!
-  [{:keys [request value-cid sign verify cost] :as options} decision roots]
-  (let [unsigned {:effect/version contract/version
-                  :request/digest (value-cid request)
-                  :authority/policy (:authority/policy request)
-                  :authority/epoch (:authority/epoch request)
-                  :effect/action (:effect/action request)
-                  :effect/resource (:effect/resource request)
-                  :code/lock (:code/lock request)
-                  :effect/granted (:admission/granted decision)
-                  :authority/decision (if (:admission/allowed? decision)
-                                        :allow :deny)
-                  :outcome/roots roots
-                  :cost (cost)
-                  :implementation/build (:implementation/build options)}
-        proof (sign unsigned)]
-    (when-not (non-empty-proof? proof)
-      (reject! :invalid-signature {}))
-    (let [signed (assoc unsigned :signature proof)]
-      (when-not (true? (verify {:record :effect-receipt
-                                :payload-cid (value-cid unsigned)
-                                :signature proof
-                                :tenant (:tenant request)
-                                :epoch (:authority/epoch request)}))
-        (reject! :signature-not-verified {:record :effect-receipt}))
-      (contract/validate-effect! {:request request
-                                  :request-digest (value-cid request)
-                                  :receipt signed})
-      signed)))
+  [{:keys [sign verify cost] :as options} decision roots]
+  (let [unsigned (unsigned-receipt options decision roots (cost))
+        proof (checked-proof (sign unsigned))
+        signed (assoc unsigned :signature proof)]
+    (verified! (verify (verification-request options unsigned proof)))
+    (validated! options signed)))
 
 (defn- durable-ack! [ack]
   (when-not (and (map? ack)
@@ -187,3 +203,81 @@
       {:result (:result @produced)
        :decision (:decision admitted)
        :effect/receipt signed})))
+
+#?(:cljs
+   (defn- then [value f]
+     (.then (js/Promise.resolve value) f)))
+
+#?(:cljs
+   (defn- signed-receipt-async!
+     "Chain the host's answers — cost, signature, verification — into one
+     validated receipt. In a Worker each of them is a Promise."
+     [{:keys [sign verify cost] :as options} decision roots]
+     (-> (then (cost) #(unsigned-receipt options decision roots %))
+         (.then (fn [unsigned]
+                  (-> (then (sign unsigned) checked-proof)
+                      (.then (fn [proof]
+                               (-> (then (verify (verification-request
+                                                  options unsigned proof))
+                                         verified!)
+                                   (.then (fn [_]
+                                            (validated!
+                                             options
+                                             (assoc unsigned :signature
+                                                    proof)))))))))))))
+
+#?(:cljs
+   (defn execute-async!
+     "The Worker path. Every host answer may be a Promise and each is awaited.
+
+     The result is not returned while the audit, the effect, the signature,
+     its verification or the receipt commit is still in flight."
+     [{:keys [request authority commit! audit! effect! package-receipt]
+       :as options}]
+     (try
+       (validate-shape! options)
+       (contract/validate-request! request)
+       (bind-lock! request package-receipt)
+       (let [consume-nonce! (window/open! {:authority authority
+                                           :expires-at (:expires-at request)
+                                           :epoch (:authority/epoch request)
+                                           :not-before nil})
+             produced (atom nil)]
+         (-> (then (consume-nonce! (:nonce request))
+                   #(window/spent! (:nonce request) %))
+             (.then
+              (fn [_]
+                (admission/guard-async!
+                 {:action (:effect/action request)
+                  :resource (:effect/resource request)
+                  :requested-effects (:effect/requested request)
+                  :delegated-effects (:delegated-effects options)
+                  :local-policy-effects (:local-policy-effects options)
+                  :cid-verified? (:cid-verified? options)
+                  :package-receipt package-receipt
+                  :audit! audit!
+                  :effect (fn [decision]
+                            (then (effect! decision)
+                                  #(reset! produced (checked-outcome %))))})))
+             (.then
+              (fn [admitted]
+                (-> (signed-receipt-async! options (:decision admitted)
+                                           (:roots @produced))
+                    (.then (fn [signed]
+                             (-> (then (commit! signed) durable-ack!)
+                                 (.then (fn [_]
+                                          {:result (:result @produced)
+                                           :decision (:decision admitted)
+                                           :effect/receipt signed}))))))))
+             (.catch
+              (fn [error]
+                (if (= :kotobase/admission-denied (:type (ex-data error)))
+                  (let [decision (:decision (ex-data error))]
+                    (-> (signed-receipt-async! options decision [])
+                        (.then (fn [signed]
+                                 (then (commit! signed) durable-ack!)))
+                        (.then (fn [ack]
+                                 (refused! error decision ack)))))
+                  (js/Promise.reject error))))))
+       (catch :default error
+         (js/Promise.reject error)))))
