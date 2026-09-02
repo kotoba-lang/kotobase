@@ -39,21 +39,28 @@ still agree with themselves.
 
 ### The planes sort into two subjects
 
+**Query executions**, against `kotobase.execution-contract`:
+
 | plane | carries | supplement |
 |---|---|---|
 | `:governed-execution` | all eight | 0 |
 | `:code-graph-query` (receipt **with** its execution identity) | decision, result root, plan digest | 5 |
 | `:causal-decision` | decision, and — when denied — that there is no result | 7, or 6 |
-| `:code-graph-execution` | — | refused |
-| `:admission` | — | refused |
 
-A `:challenge` is refused too. It means evidence still to be gathered, and
-version 1 has an allow and a deny and no third; flattening it into either
-would be the same invention this rule exists to prevent.
+**Authorised effects**, against `kotobase.effect-contract`:
 
-The last two are refused rather than mapped. A version 1 `ExecutionReceipt`
-binds one *query* execution at one immutable basis, and requires both a plan
-digest and a result root:
+| plane | carries | supplement |
+|---|---|---|
+| `:code-graph-execution` | action, resource, code lock, granted effects, policy, decision, outcome roots | 5 |
+| `:admission` | action, resource, code lock, granted effects, decision — and, when refused, that there is no outcome | 7, or 6 |
+
+A `:challenge` is refused. It means evidence still to be gathered, and version
+1 has an allow and a deny and no third; flattening it into either would be the
+same invention this rule exists to prevent.
+
+The last two lift onto a different contract rather than onto this one. A
+version 1 `ExecutionReceipt` binds one *query* execution at one immutable
+basis and requires both a plan digest and a result root:
 
 - the **code-graph execution receipt** records that an artifact was built from
   an admitted code graph under granted effects — a code root, a compiler
@@ -63,9 +70,19 @@ digest and a result root:
   sets. No query at all.
 
 So the answer to "how many evidence planes are there" is **two subjects, not
-one**: query executions, which lift here, and authorised effects, which need
-their own versioned record or an explicit version 2 — and version 1 is
-deliberately closed, so that is a decision with a cost, not a field addition.
+one** — and `kotobase.effect-contract` is now the second. It binds an
+`EffectRequest` and an `EffectReceipt`: the action, the resource, the **code
+lock** the bytes were admitted under, and the effects granted after
+intersecting what was requested, what was delegated and what local policy
+allows. Two cross-record invariants come out of `kotobase.admission`'s own
+logic: granted must be a subset of requested, and an *allow* that granted less
+than was asked records a refusal and an approval at the same time.
+
+The two contracts share a vocabulary on purpose — policy snapshot, revocation
+epoch, request digest, cost, implementation build, signature — so two subjects
+do not mean two languages. `kotobase.evidence` names the subject per plane, so
+which contract a record is evidence under is a lookup rather than a
+convention.
 
 A code-graph query receipt is read **with** the execution identity that binds
 it, and the binding is rechecked here. The receipt has the result CID; the
@@ -122,10 +139,11 @@ why the plane is now called `:causal-decision`.
 
 ## What this does not do
 
-- **Two planes remain unretired**, and neither is a query execution:
-  `code-graph`'s execution receipt and `admission`'s audit receipt. Covering
-  them means a versioned record for authorised effects, which is a decision
-  with a cost.
+- **No effect plane writes an `EffectReceipt` yet.** `kotobase.admission` and
+  `kotobase.code-graph` still write what they wrote; the contract exists and
+  they lift onto it, which is the difference between a measured distance and a
+  retired plane. The disclosure plane shows what closing that distance looks
+  like, and it took deleting a path.
 - **The code-graph query receipt plane is not retired either.** It is
   liftable, five fields short, and has its own CID and identity invariants;
   moving it is separate work.

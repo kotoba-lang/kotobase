@@ -1,76 +1,62 @@
 (ns kotobase.evidence
-  "One evidence plane, and an honest account of what does not reach it.
+  "One evidence plane per subject, and an honest account of the distance to it.
 
-  Four kinds of receipt were written before the execution contract existed:
+  Receipts were written here before either contract existed:
 
   - `kotobase.causal-commit` / `kotobase.causal-trust` commit a **causal
-    authority decision receipt** — this used to include one per guarded read,
-    until `kotobase.governed-read` replaced that path;
+    authority decision receipt**;
   - `kotobase.code-graph` persists a **query receipt** bound to an execution
     identity, and an **execution receipt** for one artifact build;
   - `kotobase.admission` requires a durable **audit receipt** before any
     effect thunk runs.
 
-  `kotobase.governed-execution` then added a fifth. Saying the contract is
-  the evidence plane while four other planes keep being written is not a
-  claim anyone can check, so this namespace makes it checkable: it lifts what
-  can be lifted, refuses what cannot, and *names the fields each plane cannot
-  answer* rather than filling them in.
+  Saying a contract is the evidence plane while four other planes keep being
+  written is not a claim anyone can check, and the tempting way to make it
+  true is a mapping function that fills in whatever the source does not carry
+  — which produces the same number of planes and a lie.
 
   The rule that makes an adapter worth having is the one it cannot break: the
   supplement a caller passes must be **exactly** the fields the source record
   does not carry. A field the source answers may not be supplied — that is
-  laundering, and it is refused by name — and a field the source lacks may
-  not be omitted. So a lifted receipt is either genuinely derived or it does
-  not exist, and the size of the supplement is the measurement of how far a
-  plane is from the contract.
+  laundering, and it is refused by name — and a field the source lacks may not
+  be omitted. So a lifted record is either genuinely derived or it does not
+  exist, and *the size of the supplement is the measurement of how far a plane
+  is from its contract*.
 
-  ## What is not liftable, and why
+  ## Two subjects
 
-  Two of the four are not query executions at all, and no supplement fixes
-  that:
+  A version 1 ExecutionReceipt binds one **query execution** at one immutable
+  basis: a plan digest and a result root are required. An admission decides
+  whether an effect thunk may run; a code-graph execution receipt records that
+  an artifact was built. Neither has either field, and inventing them is what
+  this rule exists to prevent — so they lift onto
+  `kotobase.effect-contract` instead, which binds an action, a resource, the
+  code lock it ran under, and the effects granted.
 
-  - the **code-graph execution receipt** records that an artifact was built
-    from an admitted code graph under granted effects. It has a code root, a
-    compiler contract and output roots; it has no query plan and no served
-    result.
-  - the **admission audit receipt** records that an effect thunk was allowed
-    to run — hydrate, execute or pin — against requested, delegated and local
-    effect sets. Same absence.
-
-  A version 1 ExecutionReceipt binds one *query* execution at one immutable
-  basis: a plan digest and a result root are required fields, and version 1 is
-  deliberately closed. Mapping an effect admission onto it would mean inventing
-  both. So the answer to `how many evidence planes are there` is **two
-  subjects, not one**: query executions, which lift here, and authorised
-  effects, which need their own versioned record or an explicit version 2 —
-  see `docs/ADR-execution-contract.md` on what a new field costs."
+  Both contracts share a vocabulary on purpose — policy snapshot, revocation
+  epoch, request digest, cost, implementation build, signature — so two
+  subjects do not mean two languages."
   (:require [clojure.set :as set]
+            [kotobase.effect-contract :as effect]
             [kotobase.execution-contract :as contract]))
-
-(def query-execution-planes
-  "Planes whose records describe one query execution."
-  #{:causal-decision :code-graph-query :governed-execution})
-
-(def effect-planes
-  "Planes whose records describe an authorised effect, not a query.
-
-  Each value is why it cannot be a version 1 ExecutionReceipt."
-  {:code-graph-execution
-   "records that an artifact was built from an admitted code graph; it has a
-   code root, a compiler contract and output roots, and no query plan or
-   served result"
-   :admission
-   "records that an effect thunk (hydrate, execute, pin) was admitted against
-   requested, delegated and local effect sets; it has no query at all"})
 
 (def adapter-supplied
   "Fields the adapter itself answers, so they are neither carried nor missing."
-  #{:receipt/version})
+  {:query-execution #{:receipt/version}
+   :authorised-effect #{:effect/version}})
 
-(def answerable
-  "The fields a source plane or its supplement has to account for."
-  (set/difference contract/receipt-keys adapter-supplied))
+(def subjects
+  "What a plane's records can be evidence *of*."
+  {:query-execution
+   {:version-key :receipt/version
+    :version contract/version
+    :fields contract/receipt-keys
+    :validate contract/validate-receipt!}
+   :authorised-effect
+   {:version-key :effect/version
+    :version effect/version
+    :fields effect/receipt-keys
+    :validate effect/validate-receipt!}})
 
 (defn- reject! [reason data]
   (throw (ex-info "evidence lift rejected"
@@ -79,15 +65,20 @@
 (defn- non-empty-string? [value]
   (and (string? value) (seq value)))
 
+(defn answerable
+  "The fields a source plane or its supplement has to account for."
+  [subject]
+  (set/difference (get-in subjects [subject :fields])
+                  (get adapter-supplied subject)))
+
 (defn- causal-decision-carried
   "What a committed causal authority decision receipt answers.
 
   Only the decision, and — when it is a denial — that there is no result. Its
   outcome binds a row count when it binds anything at all, which is a fact
-  about how many rows there were and not about which rows they were, so it
-  cannot answer `:result/root` for a served read. That gap is why the read
-  path that wrote these is gone; what still writes them is authority
-  persistence, where there is no result to name.
+  about how many rows there were and not about which rows they were. That gap
+  is why the read path that used to write these is gone; what still writes
+  them is authority persistence, where there is no result to name.
 
   A `:challenge` is neither an allow nor a deny — it is evidence still to be
   gathered — and version 1 has no third decision, so it is refused rather than
@@ -133,47 +124,111 @@
    :query/plan-digest (:plan-cid execution-identity)})
 
 (defn- governed-execution-carried
-  "A receipt this repository already produced under the contract.
+  "A receipt this repository already produced under the execution contract.
 
   It answers everything, so its supplement is empty. Present so that `lift`
   covers every plane and the empty supplement is a measurement rather than an
   omission."
   [record]
   (contract/validate-receipt! record)
-  (select-keys record answerable))
+  (select-keys record (answerable :query-execution)))
 
-(def ^:private carriers
-  {:causal-decision causal-decision-carried
-   :code-graph-query code-graph-query-carried
-   :governed-execution governed-execution-carried})
+(defn- admission-carried
+  "What an admission decision answers about the effect it admitted.
+
+  `kotobase.admission/decide` returns the action, the resource, the package
+  lock the bytes were admitted under, the post-intersection granted set, and
+  whether the thunk may run. It does not name what the thunk produced: the
+  effect's result is returned to the caller and never bound into the audit
+  record, so an admitted effect owes an outcome root and a refused one does
+  not — there is nothing to name."
+  [record]
+  (when-not (and (map? record) (contains? record :admission/allowed?))
+    (reject! :unreadable-source {:plane :admission}))
+  (let [allowed? (:admission/allowed? record)]
+    (when-not (boolean? allowed?)
+      (reject! :unreadable-source {:plane :admission
+                                   :field :admission/allowed?}))
+    (when-not (and (keyword? (:admission/action record))
+                   (non-empty-string? (:admission/resource record))
+                   (non-empty-string? (:admission/package-lock-cid record))
+                   (set? (:admission/granted record)))
+      (reject! :unreadable-source {:plane :admission}))
+    (cond-> {:authority/decision (if allowed? :allow :deny)
+             :effect/action (:admission/action record)
+             :effect/resource (:admission/resource record)
+             :code/lock (:admission/package-lock-cid record)
+             :effect/granted (:admission/granted record)}
+      (not allowed?) (assoc :outcome/roots []))))
+
+(defn- code-graph-execution-carried
+  "What a code-graph execution receipt answers about the build it recorded.
+
+  The action is a constant for the same reason the query receipt's decision is
+  one: the record exists only because an artifact was built from an admitted
+  code graph, so `:build` and `:allow` are what its existence means rather
+  than fields it forgot to carry. Its output roots are the outcome."
+  [record]
+  (when-not (and (map? record)
+                 (non-empty-string? (:artifact-cid record))
+                 (non-empty-string? (:package-lock-cid record))
+                 (non-empty-string? (:policy-cid record))
+                 (set? (:granted-effects record))
+                 (vector? (:output-root-cids record))
+                 (seq (:output-root-cids record))
+                 (every? non-empty-string? (:output-root-cids record)))
+    (reject! :unreadable-source {:plane :code-graph-execution}))
+  {:authority/decision :allow
+   :effect/action :build
+   :effect/resource (:artifact-cid record)
+   :code/lock (:package-lock-cid record)
+   :effect/granted (:granted-effects record)
+   :authority/policy (:policy-cid record)
+   :outcome/roots (:output-root-cids record)})
+
+(def planes
+  "Every plane this repository writes, and what its records are evidence of."
+  {:causal-decision {:subject :query-execution :carry causal-decision-carried}
+   :code-graph-query {:subject :query-execution :carry code-graph-query-carried}
+   :governed-execution {:subject :query-execution
+                        :carry governed-execution-carried}
+   :admission {:subject :authorised-effect :carry admission-carried}
+   :code-graph-execution {:subject :authorised-effect
+                          :carry code-graph-execution-carried}})
+
+(defn subject
+  "Which contract PLANE's records are evidence under."
+  [plane]
+  (or (get-in planes [plane :subject])
+      (reject! :unknown-plane {:plane plane :known (set (keys planes))})))
 
 (defn carried
   "The version 1 fields SOURCE actually answers, on the named PLANE."
   [plane source]
-  (when-let [why (get effect-planes plane)]
-    (reject! :not-a-query-execution {:plane plane :because why}))
-  (if-let [carrier (get carriers plane)]
-    (carrier source)
-    (reject! :unknown-plane {:plane plane :known (set (keys carriers))})))
+  (subject plane)
+  ((get-in planes [plane :carry]) source))
 
 (defn missing
-  "The version 1 fields SOURCE cannot answer — the supplement `lift` demands.
+  "The fields SOURCE cannot answer — the supplement `lift` demands.
 
-  Its size is the distance between that plane and the contract, and it is a
-  function of the record: a denial carries `:result/root` (there is none) where
-  a disclosure of served rows does not."
+  Its size is the distance between that plane and its contract, and it is a
+  function of the record: a denial carries an outcome (there is none) where an
+  admitted effect does not."
   [plane source]
-  (set/difference answerable (set (keys (carried plane source)))))
+  (set/difference (answerable (subject plane))
+                  (set (keys (carried plane source)))))
 
 (defn lift
-  "Return SOURCE as a validated version 1 ExecutionReceipt, or throw.
+  "Return SOURCE as a validated version 1 record of its subject, or throw.
 
   SUPPLEMENT must be exactly `(missing plane source)`. Supplying a field the
   source already answers is refused as laundering; omitting one it does not is
   refused as an incomplete lift. There is no arity that fills a gap silently."
   [plane source supplement]
-  (let [carried (carried plane source)
-        needed (set/difference answerable (set (keys carried)))]
+  (let [subject (subject plane)
+        {:keys [version-key version validate]} (get subjects subject)
+        carried (carried plane source)
+        needed (set/difference (answerable subject) (set (keys carried)))]
     (when-not (map? supplement)
       (reject! :invalid-supplement {:plane plane}))
     (let [given (set (keys supplement))
@@ -185,5 +240,4 @@
                  {:plane plane
                   :missing (set/difference needed given)
                   :unexpected (set/difference given needed)})))
-    (contract/validate-receipt!
-     (merge {:receipt/version contract/version} carried supplement))))
+    (validate (merge {version-key version} carried supplement))))

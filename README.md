@@ -45,9 +45,11 @@ a source plane's record onto a version 1 `ExecutionReceipt` under a rule it
 cannot break — the supplement must be exactly the fields the source does not
 carry, so laundering a field the source answers and omitting one it does not
 are both refused — which makes the distance from each plane to the contract a
-number rather than a claim. Effect admissions and artifact builds are refused
-rather than mapped: they are not query executions, and version 1 requires a
-plan digest and a result root. See
+number rather than a claim. Effect admissions and artifact builds are evidence
+of a different subject — they have no query plan and no served result — so
+they lift onto `kotobase.effect-contract`, which binds an action, a resource,
+the code lock the bytes were admitted under and the effects granted. Both
+contracts share one vocabulary, so two subjects do not mean two languages. See
 [`docs/ADR-evidence-plane.md`](docs/ADR-evidence-plane.md).
 
 `kotobase.governed-read` is the one read path that serves rows and leaves
