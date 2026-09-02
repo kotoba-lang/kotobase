@@ -11,11 +11,13 @@
             [identity.adapters.ledger :as identity-ledger]
             [kotobase.causal-trust :as compatibility]
             [kotobase.core :as core]
+            [kotobase.execution-contract :as contract]
             [kotobase.guarded :as guarded]))
 
 (def format-version "kotobase.causal-record.v1")
 (def identity-stream "causal-identity")
 (def decision-stream "causal-decisions")
+(def execution-stream "causal-executions")
 
 (def ^:private genesis-basis "kotobase:genesis")
 (def ^:private format-attribute "kotobase.causal/format")
@@ -270,6 +272,34 @@
        database
        (compatibility/disclosure-receipt plan execution)
        expected-basis-cid))))
+
+(defn execution-receipt-sink
+  "Build the `:commit!` that `kotobase.governed-execution` requires.
+
+  The ExecutionReceipt is validated again here rather than trusted from the
+  caller — this is the boundary where it becomes durable, and a record that
+  only the layer that built it ever checked is checked once. It is then
+  written at an exact immutable basis and *read back from the commit it
+  produced* before the acknowledgement returns: `commit-records!` refuses a
+  write whose read-back does not reproduce it, so `durable` here means `read
+  back`, not `the write call returned`.
+
+  `receipt-cid-fn` is the host's canonical codec. This namespace does not hash
+  a printed representation to name a receipt."
+  [database {:keys [expected-basis-cid receipt-cid-fn] :as options}]
+  (when-not (= #{:expected-basis-cid :receipt-cid-fn} (set (keys options)))
+    (reject! :invalid-execution-sink-options {}))
+  (when-not (ifn? receipt-cid-fn)
+    (reject! :missing-receipt-cid-function {}))
+  (when-not (or (nil? expected-basis-cid) (non-empty-string? expected-basis-cid))
+    (reject! :invalid-expected-basis {}))
+  (fn [receipt]
+    (contract/validate-receipt! receipt)
+    (let [receipt-id (receipt-cid-fn receipt)]
+      (when-not (non-empty-string? receipt-id)
+        (reject! :invalid-receipt-cid {}))
+      (commit-records! database execution-stream receipt-id
+                       expected-basis-cid [receipt]))))
 
 (defn read!
   "Admit and evaluate at one basis, then commit the receipt before rows return."

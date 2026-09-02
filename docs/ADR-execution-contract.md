@@ -52,3 +52,7 @@ Validation is fail closed:
   performance regression, audit, and billing.
 - Version 1 is intentionally closed. New fields require a new version and an
   explicit compatibility decision.
+
+The caller that produces these records, and the runtime authority checks this
+module cannot make, are in
+[`ADR-governed-execution.md`](ADR-governed-execution.md).
