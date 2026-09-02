@@ -25,6 +25,7 @@
             [kotobase.classification-agreement-test]
             [kotobase.classification-test]
             [kotobase.code-graph-test]
+            [kotobase.effect-contract-test]
             [kotobase.erasure-test]
             [kotobase.evidence-test]
             [kotobase.execution-contract-test]

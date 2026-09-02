@@ -2,6 +2,7 @@
   (:require [clojure.set :as set]
             [clojure.test :refer [deftest is testing]]
             [kotobase.code-graph :as code-graph]
+            [kotobase.effect-contract :as effect]
             [kotobase.evidence :as evidence]
             [kotobase.execution-contract :as contract]
             [kotobase.governed-execution :as governed]
@@ -51,25 +52,57 @@
                 :execution/manifest "bafy-manifest"
                 :query/plan-digest "bafy-plan"
                 :result/root "bafy-result"
+                :authority/policy "bafy-policy"
+                :authority/epoch 7
+                :effect/action :execute
+                :effect/resource "bafy-artifact"
+                :code/lock "bafy-lock"
+                :effect/granted #{:object/read}
+                :outcome/roots ["bafy-output"]
                 :cost {:dependent-hops 1 :requests 2 :bytes 512
                        :cache-profile :cold}
                 :implementation/build "kotobase@lift"
                 :signature "sig"}
                (evidence/missing plane source)))
 
+(def admission-decision
+  {:admission/allowed? true
+   :admission/code nil
+   :admission/action :execute
+   :admission/resource "bafy-object"
+   :admission/package-lock-cid "bafy-lock"
+   :admission/requested #{:object/read}
+   :admission/granted #{:object/read}
+   :admission/missing #{}})
+
+(def build-receipt
+  {:cid "bafy-execution"
+   :artifact-cid "bafy-artifact"
+   :package-lock-cid "bafy-lock"
+   :policy-cid "bafy-policy"
+   :granted-effects #{:object/read}
+   :output-root-cids ["bafy-output"]})
+
 (deftest the-plane-count-is-a-partition-not-a-slogan
-  (testing "every field of a version 1 receipt is somebody's job"
-    ;; derived from the contract rather than restated, so a version 2 field
+  (testing "every field of each contract is somebody's job"
+    ;; derived from the contracts rather than restated, so a version 2 field
     ;; cannot appear without appearing here
-    (is (= contract/receipt-keys
-           (set/union evidence/answerable evidence/adapter-supplied)))
-    (is (empty? (set/intersection evidence/answerable
-                                  evidence/adapter-supplied))))
+    (doseq [[subject fields] [[:query-execution contract/receipt-keys]
+                              [:authorised-effect effect/receipt-keys]]]
+      (is (= fields (set/union (evidence/answerable subject)
+                               (get evidence/adapter-supplied subject))))
+      (is (empty? (set/intersection (evidence/answerable subject)
+                                    (get evidence/adapter-supplied subject))))))
   (testing "and the five planes are sorted into two subjects"
-    (is (= #{:causal-decision :code-graph-query :governed-execution}
-           evidence/query-execution-planes))
-    (is (= #{:code-graph-execution :admission}
-           (set (keys evidence/effect-planes))))))
+    (is (= {:causal-decision :query-execution
+            :code-graph-query :query-execution
+            :governed-execution :query-execution
+            :admission :authorised-effect
+            :code-graph-execution :authorised-effect}
+           (update-vals evidence/planes :subject))))
+  (testing "and a plane nobody has written an adapter for is not silently empty"
+    (is (= :unknown-plane (reason #(evidence/lift :something-else {} {}))))
+    (is (= :unknown-plane (reason #(evidence/subject :something-else))))))
 
 (deftest a-decision-receipt-answers-the-decision-and-almost-nothing-else
   (testing "what it carries"
@@ -138,12 +171,16 @@
 
 (deftest a-lift-is-exactly-as-complete-as-the-supplement-it-demands
   (doseq [[plane source] [[:causal-decision decision]
-                          [:code-graph-query code-graph-source]]]
+                          [:code-graph-query code-graph-source]
+                          [:admission admission-decision]
+                          [:code-graph-execution build-receipt]]]
     (let [supplement (supplement-for plane source)
           lifted (evidence/lift plane source supplement)]
-      (testing (str plane " lifts into a valid version 1 receipt")
-        (is (= lifted (contract/validate-receipt! lifted)))
-        (is (= contract/version (:receipt/version lifted))))
+      (testing (str plane " lifts into a valid version 1 record")
+        (let [{:keys [validate version version-key]}
+              (get evidence/subjects (evidence/subject plane))]
+          (is (= lifted (validate lifted)))
+          (is (= version (get lifted version-key)))))
       (testing (str plane " refuses an incomplete lift")
         (doseq [field (keys supplement)]
           (let [data (data-of #(evidence/lift plane source
@@ -177,15 +214,45 @@
                                      {:cost {:dependent-hops 0 :requests 0
                                              :bytes 0 :cache-profile :cold}})))))))
 
-(deftest an-authorised-effect-is-not-a-query-execution
-  ;; refused rather than mapped: a version 1 receipt requires a plan digest
-  ;; and a result root, and an effect admission has neither. Inventing them is
-  ;; how an evidence plane stops being evidence
-  (doseq [plane (keys evidence/effect-planes)]
-    (let [data (data-of #(evidence/lift plane {:anything true} {}))]
-      (is (= :not-a-query-execution (:kotobase.evidence/reason data)))
-      (is (= plane (:plane data)))
-      (is (string? (:because data)))
-      (is (seq (:because data)))))
-  (testing "and a plane nobody has written an adapter for is not silently empty"
-    (is (= :unknown-plane (reason #(evidence/lift :something-else {} {}))))))
+(deftest an-authorised-effect-is-evidence-of-a-different-subject
+  ;; not refused any more, and not mapped onto a query execution either: an
+  ;; admission has no plan digest and no served result, so it lifts onto the
+  ;; contract that binds an action, a resource and the code lock it ran under
+  (testing "an admission answers five fields and owes an outcome"
+    (is (= {:authority/decision :allow
+            :effect/action :execute
+            :effect/resource "bafy-object"
+            :code/lock "bafy-lock"
+            :effect/granted #{:object/read}}
+           (evidence/carried :admission admission-decision)))
+    (is (contains? (evidence/missing :admission admission-decision)
+                   :outcome/roots)))
+  (testing "a refused one owes nothing, because there is nothing to name"
+    (let [refused (assoc admission-decision
+                         :admission/allowed? false
+                         :admission/code :admission/capability
+                         :admission/granted #{})]
+      (is (= [] (:outcome/roots (evidence/carried :admission refused))))
+      (is (not (contains? (evidence/missing :admission refused)
+                          :outcome/roots)))))
+  (testing "and a build answers what its existence means"
+    ;; `:build` and `:allow` are constants for the same reason the query
+    ;; receipt's decision is one: the record exists only because an artifact
+    ;; was built from an admitted code graph
+    (is (= {:authority/decision :allow
+            :effect/action :build
+            :effect/resource "bafy-artifact"
+            :code/lock "bafy-lock"
+            :effect/granted #{:object/read}
+            :authority/policy "bafy-policy"
+            :outcome/roots ["bafy-output"]}
+           (evidence/carried :code-graph-execution build-receipt))))
+  (testing "a record missing what the plane is supposed to have is not lifted"
+    (is (= :unreadable-source
+           (reason #(evidence/carried :admission
+                                      (dissoc admission-decision
+                                              :admission/package-lock-cid)))))
+    (is (= :unreadable-source
+           (reason #(evidence/carried :code-graph-execution
+                                      (assoc build-receipt :output-root-cids
+                                             [])))))))
