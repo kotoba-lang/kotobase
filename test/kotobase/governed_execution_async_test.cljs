@@ -175,7 +175,7 @@
           (.catch
            (fn [error]
              (is (= :nonce-replayed
-                    (:kotobase.governed-execution/reason (ex-data error))))
+                    (:kotobase.authority-window/reason (ex-data error))))
              (done)))))))
 
 (deftest worker-signature-verification-is-awaited-not-assumed

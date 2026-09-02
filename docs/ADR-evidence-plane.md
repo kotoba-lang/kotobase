@@ -139,11 +139,27 @@ why the plane is now called `:causal-decision`.
 
 ## What this does not do
 
-- **No effect plane writes an `EffectReceipt` yet.** `kotobase.admission` and
-  `kotobase.code-graph` still write what they wrote; the contract exists and
-  they lift onto it, which is the difference between a measured distance and a
-  retired plane. The disclosure plane shows what closing that distance looks
-  like, and it took deleting a path.
+- **One effect plane writes an `EffectReceipt` now** —
+  `kotobase.governed-effect`, whose supplement is empty. `kotobase.admission`
+  and `kotobase.code-graph` still write what they wrote; the contract exists
+  and they lift onto it, which is the difference between a measured distance
+  and a retired plane.
+
+  `governed-effect` keeps `admission`'s audit rather than replacing it, and
+  that is not a leftover. A read's receipt can bind its result because reading
+  is repeatable; an effect's cannot, because an outcome does not exist until
+  the effect has run. So the audit is the **precondition** — written before
+  anything happens, so a refusal that never ran leaves a trace — and the
+  receipt is the **evidence** — written after, so what happened is named. They
+  answer different questions. What changed is that the second question is
+  answered at all, and both records lift onto one contract, so they are
+  comparable rather than merely adjacent.
+- **The code-graph query receipt is the last query-execution plane with a
+  distance.** Closing it means execution identities referencing
+  ExecutionReceipts instead of their own query receipts, and the canonical
+  copy of that code lives in `kotoba-lang/code-graph`, not here — this
+  repository has a vendored duplicate. That makes it a cross-repository change
+  rather than a deletion, which is why it is named rather than done.
 - **The code-graph query receipt plane is not retired either.** It is
   liftable, five fields short, and has its own CID and identity invariants;
   moving it is separate work.

@@ -75,6 +75,7 @@
 (defn- reason [f]
   (let [data (ex-data (try (f) nil (catch clojure.lang.ExceptionInfo e e)))]
     (or (:kotobase.governed-read/reason data)
+        (:kotobase.authority-window/reason data)
         (:kotobase.governed-execution/reason data))))
 
 (deftest a-read-returns-rows-only-behind-an-execution-receipt

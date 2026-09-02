@@ -93,10 +93,11 @@
                                (get evidence/adapter-supplied subject))))
       (is (empty? (set/intersection (evidence/answerable subject)
                                     (get evidence/adapter-supplied subject))))))
-  (testing "and the five planes are sorted into two subjects"
+  (testing "and every plane is sorted into one of the two subjects"
     (is (= {:causal-decision :query-execution
             :code-graph-query :query-execution
             :governed-execution :query-execution
+            :governed-effect :authorised-effect
             :admission :authorised-effect
             :code-graph-execution :authorised-effect}
            (update-vals evidence/planes :subject))))
