@@ -147,5 +147,8 @@ why the plane is now called `:causal-decision`.
 - **The code-graph query receipt plane is not retired either.** It is
   liftable, five fields short, and has its own CID and identity invariants;
   moving it is separate work.
-- **Still no cross-protocol conformance suite.** Nothing yet runs one semantic
-  request through two frontends and compares result roots.
+- **The conformance harness exists** (`kotobase.conformance`) and the
+  frontends driven through it are two implementations of one query surface,
+  because this repository has one. That is enough to show the comparison
+  discriminates and not enough to claim cross-protocol agreement; a protocol
+  frontend plugs in the same way.
