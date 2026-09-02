@@ -1,18 +1,21 @@
 (ns kotobase.governed-execution-async-test
   "The Worker half of the governed path.
 
-  In a Worker every host answer this composition needs is asynchronous: a
-  query digest, a plan digest, a result root and a signature are all
-  `crypto.subtle` calls, the nonce ledger is a KV or Durable Object read, and
-  the receipt commit is storage. A synchronous-only path would force the host
-  to precompute all of them, which is exactly the shape `execute!` refuses —
-  a cost declared before the work and a root declared before the rows.
+  In a Worker most of what this composition needs from the host is
+  asynchronous: a signature and its verification are `crypto.subtle` calls,
+  the nonce ledger is a KV or Durable Object read, and the receipt commit is
+  storage. A synchronous-only path would force the host to precompute them,
+  which is exactly the shape `execute!` refuses — a cost declared before the
+  work and a signature over a receipt that does not exist yet.
 
-  So this suite makes every one of them a Promise and asserts the ordering
-  that matters: nothing is served until the receipt is committed."
+  The address function is the exception and is required to be synchronous: a
+  canonical value codec is a pure function of the value, and one that needs
+  I/O is not one. That it is the *same* function here as on the JVM is the
+  point — the CIDs asserted below are the CIDs the JVM suite asserts."
   (:require [cljs.test :refer-macros [async deftest is testing]]
             [kotobase.causal-commit :as causal]
             [kotobase.core :as core]
+            [kotobase.execution-identity :as id]
             [kotobase.governed-execution :as governed]
             [kotobase.governed-execution-test :as fixture]
             [kotobase.storage.memory :as memory]))
@@ -33,50 +36,55 @@
                false
                (do (swap! seen conj nonce) true))))))
 
+(defn- query-at [basis]
+  (assoc-in fixture/query [:scope :basis] basis))
+
 (defn- options
   "The fixture composition with every host answer deferred to a Promise."
   [db steps basis & {:as overrides}]
-  (merge
-   {:request (assoc fixture/request :base/commit basis)
-    :request-digest "bafy-request"
-    :manifest (assoc fixture/manifest :data/commit basis)
-    :manifest-cid "bafy-manifest"
-    :authority {:now "2026-09-02T14:30:00Z"
-                :epoch 7
-                :consume-nonce! (fresh-nonce)}
-    :query-digest (fn [_] (later "bafy-query"))
-    :plan-digest (fn [compiled] (later (if compiled "bafy-plan" "bafy-no-plan")))
-    :cost (fn [] (later {:dependent-hops 1 :requests 2 :bytes 512
-                         :cache-profile :cold}))
-    :implementation/build "kotobase@worker-test"
-    :result-root (fn [rows] (later (str "bafy-rows-" (count rows))))
-    :sign (fn [unsigned]
-            (later (str "sig-" (name (:authority/decision unsigned)))))
-    :commit! (fn [receipt]
-               (swap! steps conj :commit)
-               ((causal/execution-receipt-sink
-                 db {:expected-basis-cid nil
-                     :receipt-cid-fn (constantly "bafy-worker-execution")})
-                receipt))
-    :authorize! (fn [q]
-                  (swap! steps conj :model)
-                  (later {:allowed? true
-                          :projection (set (:find q))
-                          :basis basis
-                          :policy-cid "bafy-policy"}))
-    :schema fixture/schema
-    :grant fixture/grant
-    :query (assoc-in fixture/query [:scope :basis] basis)
-    :evaluate! (fn [_ _]
-                 (swap! steps conj :evaluate)
-                 (-> (core/q (core/at-cid db basis) ["INV-42" nil nil])
-                     (.then
-                      (fn [stored]
-                        (let [values (into {} (map (juxt :p :o)) stored)]
-                          [{:invoice/id (get values "invoice/id")
-                            :invoice/amount
-                            (js/parseInt (get values "invoice/amount") 10)}])))))}
-   overrides))
+  (let [query (query-at basis)]
+    (merge
+     {:request (assoc fixture/request
+                      :base/commit basis
+                      :query/digest (id/value-cid query))
+      :manifest (fixture/resigned (assoc fixture/manifest :data/commit basis))
+      :authority {:now "2026-09-02T14:30:00Z"
+                  :epoch 7
+                  :consume-nonce! (fresh-nonce)}
+      :value-cid id/value-cid
+      :verify (fn [request] (later (fixture/verify request)))
+      :plan-digest (fn [compiled]
+                     (later (if compiled "bafy-plan" "bafy-no-plan")))
+      :cost (fn [] (later {:dependent-hops 1 :requests 2 :bytes 512
+                           :cache-profile :cold}))
+      :implementation/build "kotobase@worker-test"
+      :sign (fn [unsigned] (later (fixture/proof unsigned)))
+      :commit! (fn [receipt]
+                 (swap! steps conj :commit)
+                 ((causal/execution-receipt-sink
+                   db {:expected-basis-cid nil
+                       :receipt-cid-fn (constantly "bafy-worker-execution")})
+                  receipt))
+      :authorize! (fn [q]
+                    (swap! steps conj :model)
+                    (later {:allowed? true
+                            :projection (set (:find q))
+                            :basis basis
+                            :policy-cid "bafy-policy"}))
+      :schema fixture/schema
+      :grant fixture/grant
+      :query query
+      :evaluate! (fn [_ _]
+                   (swap! steps conj :evaluate)
+                   (-> (core/q (core/at-cid db basis) ["INV-42" nil nil])
+                       (.then
+                        (fn [stored]
+                          (let [values (into {} (map (juxt :p :o)) stored)]
+                            [{:invoice/id (get values "invoice/id")
+                              :invoice/amount
+                              (js/parseInt (get values "invoice/amount")
+                                           10)}])))))}
+     overrides)))
 
 (defn- seeded [f]
   (let [db (database)]
@@ -89,18 +97,24 @@
     (let [steps (atom [])]
       (-> (seeded
            (fn [db basis]
-             (-> (governed/execute-async! (options db steps basis))
-                 (.then (fn [result] {:db db :result result})))))
+             (let [opts (options db steps basis)]
+               (-> (governed/execute-async! opts)
+                   (.then (fn [result] {:db db :opts opts :result result}))))))
           (.then
-           (fn [{:keys [db result]}]
+           (fn [{:keys [db opts result]}]
              (swap! steps conj :returned)
              (is (= [:model :evaluate :commit :returned] @steps))
-             (is (= [{:invoice/id "INV-42" :invoice/amount 5000}]
-                    (:rows result)))
+             (is (= fixture/served (:rows result)))
              (let [receipt (:execution/receipt result)]
                (is (= :allow (:authority/decision receipt)))
-               (is (= "bafy-rows-1" (:result/root receipt)))
-               (is (= "sig-allow" (:signature receipt)))
+               (testing "the identifiers are addresses, not labels"
+                 ;; the same codec the JVM suite uses, over the records this
+                 ;; execution actually ran with
+                 (is (= (id/value-cid fixture/served) (:result/root receipt)))
+                 (is (= (id/value-cid (:request opts))
+                        (:request/digest receipt)))
+                 (is (= (id/value-cid (:manifest opts))
+                        (:execution/manifest receipt))))
                (is (= "bafy-worker-execution"
                       (get-in result [:provenance :receipt-cid])))
                (-> (causal/receipt-at
@@ -162,4 +176,25 @@
            (fn [error]
              (is (= :nonce-replayed
                     (:kotobase.governed-execution/reason (ex-data error))))
+             (done)))))))
+
+(deftest worker-signature-verification-is-awaited-not-assumed
+  (async done
+    (let [steps (atom [])]
+      (-> (seeded
+           (fn [db basis]
+             ;; a Promise resolving to `false` is a failed verification. An
+             ;; unawaited Promise object is truthy, and every signature would
+             ;; have passed
+             (governed/execute-async!
+              (options db steps basis :verify (fn [_] (later false))))))
+          (.then (fn [_]
+                   (is false "an unverified manifest was served")
+                   (done)))
+          (.catch
+           (fn [error]
+             (is (= :signature-not-verified
+                    (:kotobase.governed-execution/reason (ex-data error))))
+             (testing "and nothing ran or was written"
+               (is (= [] @steps)))
              (done)))))))

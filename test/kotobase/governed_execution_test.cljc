@@ -1,5 +1,6 @@
 (ns kotobase.governed-execution-test
   (:require [clojure.test :refer [deftest is testing]]
+            [kotobase.execution-identity :as id]
             [kotobase.governed-execution :as governed]))
 
 (def schema
@@ -22,13 +23,32 @@
   {:allowed? true :projection (set (:find q))
    :basis "bafy-basis" :policy-cid "bafy-policy"})
 
+(defn proof
+  "A toy signature that is still a signature: it is over the record's address,
+  so a record edited in any field no longer verifies. Real custody lives in
+  the host; what is exercised here is that this layer checks."
+  [record]
+  (str "sig:" (id/payload-cid record)))
+
+(defn verify
+  "The matching verifier. Returns a boolean, never a reason."
+  [{:keys [payload-cid signature]}]
+  (= signature (str "sig:" payload-cid)))
+
+(defn resigned
+  "Re-sign an edited record, so a test about one field is about that field."
+  [record]
+  (assoc record :signature (proof (dissoc record :signature))))
+
 (def request
   {:request/version 1
    :principal "did:key:z6MkCaller"
    :tenant "acme"
    :graph "invoices"
    :operation :read
-   :query/digest "bafy-query"
+   ;; not an opaque label: the address of the query above, which is what
+   ;; `execute!` recomputes and compares
+   :query/digest (id/value-cid query)
    :base/commit "bafy-basis"
    :authority/policy "bafy-policy"
    :authority/epoch 7
@@ -36,15 +56,15 @@
    :expires-at "2026-09-02T15:00:00Z"})
 
 (def manifest
-  {:execution/version 1
-   :data/commit "bafy-basis"
-   :authority/policy "bafy-policy"
-   :authority/epoch 7
-   :location/manifest "bafy-packs"
-   :schema/root "bafy-schema"
-   :parent nil
-   :issued-at "2026-09-02T14:00:00Z"
-   :signature "sig-manifest"})
+  (let [payload {:execution/version 1
+                 :data/commit "bafy-basis"
+                 :authority/policy "bafy-policy"
+                 :authority/epoch 7
+                 :location/manifest "bafy-packs"
+                 :schema/root "bafy-schema"
+                 :parent nil
+                 :issued-at "2026-09-02T14:00:00Z"}]
+    (assoc payload :signature (proof payload))))
 
 (defn nonce-ledger
   "A ledger that answers `true` once per nonce and `false` after that."
@@ -66,19 +86,17 @@
   [journal & {:as overrides}]
   (merge
    {:request request
-    :request-digest "bafy-request"
     :manifest manifest
-    :manifest-cid "bafy-manifest"
     :authority {:now "2026-09-02T14:30:00Z"
                 :epoch 7
                 :consume-nonce! (nonce-ledger)}
-    :query-digest (fn [_] "bafy-query")
+    :value-cid id/value-cid
+    :verify verify
     :plan-digest (fn [compiled] (if compiled "bafy-plan" "bafy-no-plan"))
     :cost (fn [] {:dependent-hops 1 :requests 2 :bytes 512
                   :cache-profile :cold})
     :implementation/build "kotobase@test"
-    :result-root (fn [rows] (str "bafy-rows-" (count rows)))
-    :sign (fn [unsigned] (str "sig-" (name (:authority/decision unsigned))))
+    :sign proof
     :commit! (fn [receipt]
                (swap! journal conj [:commit receipt])
                {:receipt/durable? true :receipt/cid "bafy-exec-receipt"})
@@ -115,14 +133,23 @@
       ;; the ordering is the property. A receipt written after the caller has
       ;; the rows is a log entry, not a precondition
       (is (= [:evaluate :commit] (steps journal))))
-    (testing "and it is about this execution, not about a shape"
+    (testing "and every identifier in it can be re-derived by an auditor"
+      ;; the point of the whole exercise: these are not labels the caller
+      ;; handed in, they are addresses of the records and of the rows served
       (is (= :allow (:authority/decision receipt)))
-      ;; derived from the rows that were actually served
-      (is (= "bafy-rows-1" (:result/root receipt)))
-      (is (= "bafy-request" (:request/digest receipt)))
-      (is (= "bafy-manifest" (:execution/manifest receipt)))
+      (is (= (id/value-cid served) (:result/root receipt)))
+      (is (= (id/value-cid request) (:request/digest receipt)))
+      (is (= (id/value-cid manifest) (:execution/manifest receipt)))
+      (is (= (proof (dissoc receipt :signature)) (:signature receipt))))
+    (testing "and a record edited in any field stops matching what cites it"
+      (is (not= (:execution/manifest receipt)
+                (id/value-cid (assoc manifest :schema/root "bafy-other"))))
+      (is (not= (:request/digest receipt)
+                (id/value-cid (assoc request :principal "did:key:someone"))))
+      (is (not= (:result/root receipt)
+                (id/value-cid [{:invoice/id "INV-42" :invoice/amount 5001}]))))
+    (testing "and what this layer cannot see is still the host's answer"
       (is (= "bafy-plan" (:query/plan-digest receipt)))
-      (is (= "sig-allow" (:signature receipt)))
       (is (= {:dependent-hops 1 :requests 2 :bytes 512 :cache-profile :cold}
              (:cost receipt))))
     (testing "and the guarded provenance still names the same receipt"
@@ -140,11 +167,15 @@
 
 (deftest an-envelope-must-name-the-query-that-actually-runs
   (let [journal (atom [])]
-    (testing "the semantic digest"
+    (testing "the semantic digest, which is the query's own address"
+      ;; there is no host function left to fake this with: the envelope has to
+      ;; carry the address of the query that runs
       (is (= :query-digest-mismatch
              (reason #(governed/execute!
                        (options journal
-                                :query-digest (fn [_] "bafy-other-query")))))))
+                                :request (assoc request :query/digest
+                                                (id/value-cid
+                                                 (assoc query :limit 19)))))))))
     (testing "the tenant"
       (is (= :tenant-mismatch
              (reason #(governed/execute!
@@ -154,11 +185,11 @@
       (is (= :basis-mismatch
              (reason #(governed/execute!
                        (options journal
-                                :request (assoc request
-                                                :base/commit "bafy-elsewhere"
-                                                :query/digest "bafy-query")
-                                :manifest (assoc manifest :data/commit
-                                                 "bafy-elsewhere")))))))
+                                :request (assoc request :base/commit
+                                                "bafy-elsewhere")
+                                :manifest (resigned
+                                           (assoc manifest :data/commit
+                                                  "bafy-elsewhere"))))))))
     (testing "and the policy the compiler actually applied"
       (is (= :policy-mismatch
              (reason #(governed/execute!
@@ -278,7 +309,7 @@
         ;; a denial has no result, and the contract refuses a root on one
         (is (nil? (:result/root receipt)))
         (is (= "bafy-no-plan" (:query/plan-digest receipt)))
-        (is (= "sig-deny" (:signature receipt)))))
+        (is (= (proof (dissoc receipt :signature)) (:signature receipt)))))
     (testing "and the evaluator never ran"
       (is (= [:commit] (steps journal))))))
 
@@ -316,12 +347,63 @@
                                          :receipt/commit-cid 42}))))))
       (is (= [] (committed journal))))))
 
-(deftest a-root-the-host-could-not-compute-is-not-a-result
+(deftest an-address-function-is-checked-before-it-is-believed
+  (testing "the canonical codec agrees with the vector written down for it"
+    ;; this assertion runs under both runtimes this repository ships, so the
+    ;; cross-runtime claim is made by running it, not by asserting it
+    (is (id/conformant? id/value-cid))
+    (is (= id/conformance-cid (id/value-cid id/conformance-value))))
+  (testing "and a stub is refused before anything is written"
+    (let [journal (atom [])
+          counter (let [n (atom 0)] (fn [_] (str "cid-" (swap! n inc))))
+          order-sensitive (fn [v] (str "cid-" (hash (seq v))))]
+      (doseq [[label f] [[:constant (constantly "bafy-anything")]
+                         [:counter counter]
+                         [:order-sensitive order-sensitive]
+                         [:throws (fn [_] (throw (ex-info "no codec" {})))]
+                         [:not-a-string (fn [_] 42)]]]
+        (is (= :not-an-address-function
+               (reason #(governed/execute! (options journal :value-cid f))))
+            (str label " should not pass as an address function")))
+      (is (= [] @journal))))
+  (testing "and `conformant?` is the stronger claim, kept separate"
+    ;; `governed-execution` checks the property it depends on; naming *the*
+    ;; canonical codec is this namespace's job, not the composition's
+    (is (false? (id/conformant? (constantly "bafy-anything"))))
+    (is (false? (id/conformant? nil)))))
+
+(deftest a-signature-that-does-not-verify-is-not-a-signature
   (let [journal (atom [])]
-    (is (= :invalid-result-root
-           (reason #(governed/execute!
-                     (options journal :result-root (fn [_] ""))))))
-    (is (= [] (committed journal)))))
+    (testing "the manifest is verified before the nonce is spent"
+      (let [ledger (nonce-ledger)
+            tampered (assoc manifest :location/manifest "bafy-elsewhere")]
+        (is (= :signature-not-verified
+               (reason #(governed/execute!
+                         (options journal
+                                  :manifest tampered
+                                  :request (assoc request :base/commit
+                                                  (:data/commit tampered))
+                                  :authority {:now "2026-09-02T14:30:00Z"
+                                              :epoch 7
+                                              :consume-nonce! ledger})))))
+        (is (true? (ledger "nonce-1")))))
+    (testing "and a verifier that cannot answer has not verified anything"
+      (doseq [verdict [nil false "yes" :ok]]
+        (is (= :signature-not-verified
+               (reason #(governed/execute!
+                         (options journal :verify (constantly verdict))))))))
+    (testing "the receipt's own signature is verified before it is written"
+      ;; a signer whose output does not verify is caught at write time rather
+      ;; than by an auditor later
+      (is (= :signature-not-verified
+             (reason #(governed/execute!
+                       (options journal
+                                :sign (constantly "sig:not-over-this"))))))
+      (is (= [] (committed journal))))
+    (testing "and an empty proof is refused before it is verified"
+      (is (= :invalid-signature
+             (reason #(governed/execute!
+                       (options journal :sign (constantly "")))))))))
 
 (deftest the-composition-has-no-optional-parts
   (let [journal (atom [])
@@ -334,5 +416,7 @@
            (reason #(governed/execute! (assoc opts :retry-budget 3)))))
     (testing "and no host answer may be missing"
       (is (= :missing-host-function
-             (reason #(governed/execute! (assoc opts :sign "not-a-function"))))))
+             (reason #(governed/execute! (assoc opts :sign "not-a-function")))))
+      (is (= :missing-host-function
+             (reason #(governed/execute! (assoc opts :verify nil))))))
     (is (= [] @journal))))

@@ -26,9 +26,15 @@ storage provider canonical. Validation is exact and fail closed; see
 described. `execute!` (and `execute-async!` on Workers) binds the signed
 `RequestEnvelope` to the query that will actually run, decides expiry, the
 current revocation epoch and nonce freshness against host-supplied state,
-runs the guarded read, and commits a signed `ExecutionReceipt` — built from
-the rows that were served, the plan that was compiled, and a cost read after
-evaluation — before any row is returned. A policy refusal produces a deny
+runs the guarded read, and commits a signed `ExecutionReceipt` before any row
+is returned. The identifiers in that receipt are computed, not accepted:
+`:execution/manifest`, `:request/digest` and `:result/root` are the canonical
+addresses of the manifest, the envelope and the rows that were served, so an
+auditor can re-derive each one and a record edited in any field stops matching
+what cites it. `kotobase.execution-identity` names that codec
+(`kotoba.value.codec/value-cid`); only the physical plan digest and the cost
+remain the host's answers. The receipt's signature is verified before the
+record is written, and the manifest's before the nonce is spent. A policy refusal produces a deny
 receipt on the same plane; an evaluator crash does not, because it is not an
 authority decision. `kotobase.causal-commit/execution-receipt-sink` is the
 canonical-CID implementation of that commit: it writes at an exact immutable

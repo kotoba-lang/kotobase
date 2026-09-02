@@ -45,10 +45,26 @@ skips a step, in this order:
    after `…:00.5Z`. An instant this module cannot order is refused rather than
    ordered wrongly.
 3. **The guarded read runs unchanged** — policy, classified schema, grant.
-4. **The receipt is built from what happened.** The result root is computed by
-   the host codec over the rows that were served, the plan digest over the
-   compiled query, the cost read *after* evaluation. `validate-execution!`
-   then cross-checks the receipt against the manifest and the request.
+4. **The receipt is built from what happened, and its identifiers are
+   computed rather than accepted.** `:execution/manifest` is the address of
+   the manifest, `:request/digest` the address of the envelope, `:result/root`
+   the address of the rows that were served, and the envelope's own
+   `:query/digest` must be the address of the query. An auditor holding those
+   records can re-derive every one, and a record edited in any field stops
+   matching the receipt that cites it. Only the physical plan digest and the
+   cost remain host-answered, because this layer can see neither a plan nor a
+   provider read. `validate-execution!` then cross-checks the receipt against
+   the manifest and the request.
+   The address function is an argument, not a require — `kotobase.execution-
+   identity` names the canonical one, `kotoba.value.codec/value-cid`. What the
+   composition checks is that the argument *behaves* like an address:
+   deterministic, indifferent to map entry order, and different for different
+   values. That refuses a constant, a counter, an order-sensitive hash and a
+   codec that is simply absent. It does not refuse one that lies, and says so.
+   The receipt is signed, and **the signature is verified before the record is
+   written** — a signer whose output does not verify is caught at write time
+   rather than by an auditor months later. The manifest's signature is
+   verified before the nonce is spent.
 5. **The receipt is committed and read back, and only then do rows return.**
    This reuses `kotobase.guarded`'s own rule rather than adding one: the
    contract receipt *is* the sink the guarded path already demanded, so there
@@ -81,8 +97,12 @@ back*, not *the write call returned*.
 
 ## Consequences
 
-- The contract is reachable only by producing evidence, and the evidence is
-  about this execution rather than about a shape.
+- The contract is reachable only by producing evidence, the evidence is about
+  this execution rather than about a shape, and every identifier in it can be
+  re-derived from the records by someone who was not there.
+- The canonical codec is named once, in `kotobase.execution-identity`, and
+  `io-ipld` becomes a direct dependency for it — pinned to the sha the
+  resolver already selected, so no new diamond appears.
 - Expiry, revocation and replay are enforced at runtime by state the host
   owns, and their absence is a refusal.
 - `kotobase.core`'s `q`/`query`/`pull`/`datoms`/`at-cid`/`head` remain
@@ -94,12 +114,16 @@ back*, not *the write call returned*.
 Named here so the next reader does not mistake the wiring for the finished
 thing:
 
-- **No identifier is recomputed.** `manifest-cid`, `request-digest`, the plan
-  digest, the result root and both signatures are supplied by the host and
-  only *bound* — checked for presence, non-emptiness and mutual agreement. A
-  host that computes them wrongly, or lies, is not caught here. Canonical
-  codec, digest recomputation and signature verification against a key and
-  algorithm are separate work.
+- **The signature scheme is still the host's.** `:verify` is asked a yes/no
+  question and must answer literally `true`; which key, which algorithm, and
+  whether that key was authorised for this tenant at this epoch are decided
+  outside. Binding a key to a principal and an epoch is separate work.
+- **A codec that lies is not caught.** The address function is checked for
+  behaving like an address, not for being the canonical one; a function that
+  special-cases the probe and answers freely elsewhere passes.
+  `kotobase.execution-identity/conformant?` is the stronger check and is not
+  applied to the caller's argument, because the composition deliberately does
+  not require a codec.
 - **`:cost` is not measured.** It comes from a meter asked for *after*
   evaluation rather than a value declared before it, so it cannot be attested
   ahead of the work — but it remains the host's number. Deriving dependent
