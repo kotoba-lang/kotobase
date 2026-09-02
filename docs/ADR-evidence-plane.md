@@ -154,32 +154,21 @@ why the plane is now called `:causal-decision`.
   answer different questions. What changed is that the second question is
   answered at all, and both records lift onto one contract, so they are
   comparable rather than merely adjacent.
-- **The code-graph query receipt is the last query-execution plane with a
-  distance**, and closing it is not this repository's change to make.
+- **The code-graph planes are no longer defined here.** `kotoba-lang/code-
+  graph` depends on this repository — it was extracted from it — so a carrier
+  for its records could only live here as a dependency cycle or as a copy of
+  its shape, and a copy of a shape is exactly what this namespace exists to
+  stop being necessary. `carried` / `missing` / `lift` now take either a
+  registered plane keyword or a `{:subject … :carry …}` map, so the library
+  that writes the records defines the plane, and the lift rule is unchanged
+  for it.
 
-  Closing it means execution identities referencing ExecutionReceipts instead
-  of their own query receipts. But `src/kotobase/code_graph.cljc` is a
-  **byte-identical copy** of `kotoba-lang/code-graph`'s `code_graph/core.cljc`
-  — measured 2026-09-02, 668 lines each, differing only in the `ns` form; the
-  async halves likewise. Nothing outside this repository requires
-  `kotobase.code-graph` (measured across the repositories checked out in this
-  workspace, which is a bounded measurement and not a proof).
+  The vestigial copy is gone with them. `src/kotobase/code_graph.cljc` was
+  byte-identical to `kotoba-lang/code-graph`'s `code_graph/core.cljc` — 668
+  lines each, differing only in the `ns` form, the async halves likewise —
+  left behind when the library was extracted (ADR-2607201600 M6). Nothing
+  outside this repository required it, measured across the repositories
+  checked out in this workspace, which is bounded and not a proof.
 
-  So retiring the plane here would make the copy diverge from the library it
-  was copied from, and a fix that lands in one copy and not the other is worse
-  than the gap it closed. The change belongs in `kotoba-lang/code-graph`, and
-  the duplication is its own hazard to be resolved before or with it.
-
-  The measurement is written down rather than asserted so that the blocker can
-  be rechecked:
-
-      diff <(sed 's/code-graph\.//;s/kotobase\.//' src/kotobase/code_graph.cljc) \
-           <(sed 's/code-graph\.//;s/kotobase\.//' ../code-graph/src/code_graph/core.cljc)
-- **The code-graph query receipt plane is not retired either.** It is
-  liftable, five fields short, and has its own CID and identity invariants;
-  moving it is separate work.
-- **The conformance harness exists** (`kotobase.conformance`) and the
-  frontends driven through it are two implementations of one query surface,
-  because this repository has one. That is enough to show the comparison
-  discriminates and not enough to claim cross-protocol agreement; a protocol
-  frontend plugs in the same way.
+  Closing the query receipt's own distance to the contract is now a change in
+  one place instead of two, and it belongs where the records are written.
