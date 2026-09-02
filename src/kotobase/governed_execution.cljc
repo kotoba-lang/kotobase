@@ -12,47 +12,56 @@
 
   1. the **RequestEnvelope** is validated and then *bound to the query that
      will actually run*. A signed envelope naming a different query than the
-     one evaluated is the whole attack; `:query/digest`, `:tenant`, and
-     `:base/commit` are checked against the guest AST before admission, and
-     `:authority/policy` against the policy CID the compiler actually
-     returned.
+     one evaluated is the whole attack; `:query/digest` is checked against the
+     address of the guest AST, `:tenant` and `:base/commit` against its scope,
+     and `:authority/policy` against the policy CID the compiler returned.
   2. **runtime authority** is decided against wall time, the current
-     revocation epoch, and a nonce ledger. `validate-request!` proves an
-     expiry *field is present*; it cannot prove the request has not expired,
-     that the epoch it names is still current, or that the nonce is fresh.
-     None of those are answerable without state the host owns, so the host
-     supplies it and this namespace refuses when it is absent — a missing
-     nonce ledger is a refusal, not an allowance.
+     revocation epoch, a nonce ledger, and a signature over the manifest.
+     `validate-request!` proves an expiry *field is present*; it cannot prove
+     the request has not expired, that the epoch it names is still current,
+     that the nonce is fresh, or that the manifest was signed by anyone. None
+     of those are answerable without state the host owns, so the host supplies
+     it and this namespace refuses when it is absent — a missing nonce ledger
+     is a refusal, not an allowance.
   3. the guarded read runs (`kotobase.guarded/read!`: policy, classified
      schema, grant, receipt sink).
-  4. the **ExecutionReceipt** is built from what actually happened — a result
-     root computed from the rows, a plan digest from the compiled query, a
-     cost read *after* evaluation — signed, and cross-checked against the
-     manifest and the request by `validate-execution!`.
-  5. the receipt is **committed and read back** by the host sink, and only
-     then do the rows return. This reuses `kotobase.guarded`'s own rule rather
-     than adding one: the receipt sink it already demands is the sink that
-     writes the contract record, so there is no ordering left to get wrong and
-     no second receipt plane.
+  4. the **ExecutionReceipt** is built from what actually happened, and the
+     identifiers in it are **computed, not accepted**. `:execution/manifest`
+     is the address of the manifest, `:request/digest` the address of the
+     envelope, `:result/root` the address of the rows that were served. An
+     auditor holding those records can re-derive every one; a record edited in
+     any field stops matching the receipt that cites it. Only the physical
+     plan digest and the cost stay host-answered, because this layer cannot
+     see a plan or a provider read.
+  5. the receipt is signed, the signature is **verified before it is written**,
+     and the receipt is **committed and read back** by the host sink. Only then
+     do the rows return. This reuses `kotobase.guarded`'s own rule rather than
+     adding one: the receipt sink it already demands is the sink that writes
+     the contract record, so there is no ordering left to get wrong and no
+     second receipt plane.
 
   A refusal produces a receipt too. The contract's stated purpose is that
   success and refusal share one evidence plane, which is only true if a denial
   is as durable as a disclosure — otherwise the cheapest way to leave no trace
   is to be refused.
 
+  The address function is an argument, not a require: `kotobase.execution-
+  identity` names the canonical one. What is checked here is that the argument
+  behaves like an address — deterministic, insensitive to map entry order, and
+  different for different values — which refuses a stub or a constant but not
+  a codec that lies.
+
   **Not yet evidence: `:cost`.** It comes from a meter the host is asked for
   *after* evaluation rather than a value the caller declares before it, so it
   cannot be attested ahead of the work — but it is still the host's number.
   Measuring dependent hops, provider requests, and bytes from the pack reads
-  themselves is separate, unfinished work; until it lands, a cost in a receipt
-  written here says what the host claims it spent."
+  themselves is separate, unfinished work."
   (:require [kotobase.execution-contract :as contract]
             [kotobase.guarded :as guarded]))
 
 (def ^:private execute-keys
-  #{:request :request-digest :manifest :manifest-cid :authority
-    :query-digest :plan-digest :cost :implementation/build
-    :result-root :sign :commit!
+  #{:request :manifest :authority :value-cid :verify
+    :plan-digest :cost :implementation/build :sign :commit!
     :authorize! :schema :grant :query :evaluate!})
 
 (def ^:private authority-keys
@@ -92,25 +101,47 @@
 (defn- before? [left right]
   (neg? (compare left right)))
 
+(def ^:private probe
+  ;; two values that differ, and one of the two written in a different entry
+  ;; order. An address function must agree with itself on the first, disagree
+  ;; on the second, and be indifferent to the third
+  {:same (array-map :a 1 :b [2 "three"] :c :four)
+   :reordered (array-map :c :four :b [2 "three"] :a 1)
+   :other (array-map :a 1 :b [2 "three"] :c :five)})
+
+(defn- address-fn!
+  "Refuse anything that is not behaving like a content address.
+
+  Not a codec conformance check — `kotobase.execution-identity/conformant?`
+  is that, and it names one canonical answer. This is the weaker property the
+  composition actually depends on, and it is what stops a stub: a constant
+  fails, a counter fails, and a function that hashes insertion order fails."
+  [value-cid]
+  (when-not (ifn? value-cid)
+    (reject! :missing-host-function {:function :value-cid}))
+  (let [answer (fn [k] (try (value-cid (get probe k))
+                            (catch #?(:clj Exception :cljs :default) _ ::threw)))
+        same (answer :same)]
+    (when-not (and (non-empty-string? same)
+                   (= same (answer :same))
+                   (= same (answer :reordered))
+                   (not= same (answer :other)))
+      (reject! :not-an-address-function {}))
+    value-cid))
+
 (defn- validate-shape!
-  [{:keys [request-digest manifest-cid query-digest plan-digest cost
-           result-root sign commit!]
-    :as options}]
+  [{:keys [value-cid plan-digest cost sign verify commit!] :as options}]
   (when-not (and (map? options) (= execute-keys (set (keys options))))
     (reject! :invalid-execution-options
              {:missing (vec (remove (set (keys options)) execute-keys))
               :unexpected (vec (remove execute-keys (keys options)))}))
-  (when-not (non-empty-string? request-digest)
-    (reject! :invalid-request-digest {}))
-  (when-not (non-empty-string? manifest-cid)
-    (reject! :invalid-manifest-cid {}))
   (when-not (non-empty-string? (:implementation/build options))
     (reject! :invalid-implementation-build {}))
-  (doseq [[label f] [[:query-digest query-digest] [:plan-digest plan-digest]
-                     [:cost cost] [:result-root result-root]
-                     [:sign sign] [:commit! commit!]]]
+  (doseq [[label f] [[:plan-digest plan-digest] [:cost cost] [:sign sign]
+                     [:verify verify] [:commit! commit!]]]
     (when-not (ifn? f)
       (reject! :missing-host-function {:function label})))
+  (address-fn! value-cid)
   options)
 
 (defn- timing!
@@ -153,6 +184,23 @@
     (reject! :nonce-replayed {:nonce (:nonce request)}))
   true)
 
+(defn- signature-request
+  "What the host is asked to verify: a record's own address and its proof.
+
+  The address is of the record *without* its signature, because a signature
+  cannot be inside the bytes it signs."
+  [value-cid kind record]
+  {:record kind
+   :payload-cid (value-cid (dissoc record :signature))
+   :signature (:signature record)})
+
+(defn- verified! [kind verdict]
+  (when-not (true? verdict)
+    ;; a verifier that returned nil, false, or something it could not decide
+    ;; has not said this signature is good
+    (reject! :signature-not-verified {:record kind}))
+  true)
+
 (defn- bind-scope!
   "Tie the signed envelope to the scope of the guest AST about to be admitted."
   [request query]
@@ -164,10 +212,11 @@
                               :query (get-in query [:scope :basis])})))
 
 (defn- bind-digest!
-  "Without this the envelope is evidence about a query nobody ran."
+  "The envelope's semantic digest must be the address of the query itself.
+
+  Computed here rather than asked for: an envelope is evidence about a query
+  nobody ran unless the digest in it is one anybody can re-derive."
   [request digest]
-  (when-not (non-empty-string? digest)
-    (reject! :invalid-query-digest {}))
   (when-not (= digest (:query/digest request))
     (reject! :query-digest-mismatch
              {:envelope (:query/digest request) :evaluated digest}))
@@ -188,12 +237,17 @@
                               :compiled (:basis decision)}))
   decision)
 
+(defn- identities
+  "The addresses this execution is about, computed once from the records."
+  [{:keys [value-cid manifest request]}]
+  {:manifest-cid (value-cid manifest)
+   :request-digest (value-cid request)})
+
 (defn- unsigned-receipt
-  [{:keys [request-digest manifest-cid] :as options} plan-digest decision
-   result-root cost]
+  [options ids plan-digest decision result-root cost]
   {:receipt/version contract/version
-   :request/digest request-digest
-   :execution/manifest manifest-cid
+   :request/digest (:request-digest ids)
+   :execution/manifest (:manifest-cid ids)
    :query/plan-digest plan-digest
    :authority/decision decision
    :result/root result-root
@@ -210,17 +264,12 @@
     (reject! :invalid-plan-digest {}))
   digest)
 
-(defn- checked-result-root [root]
-  (when-not (non-empty-string? root)
-    (reject! :invalid-result-root {}))
-  root)
-
 (defn- validated-bundle
-  [{:keys [request request-digest manifest manifest-cid]} execution-receipt]
+  [{:keys [request manifest]} ids execution-receipt]
   (contract/validate-execution! {:manifest manifest
-                                 :manifest-cid manifest-cid
+                                 :manifest-cid (:manifest-cid ids)
                                  :request request
-                                 :request-digest request-digest
+                                 :request-digest (:request-digest ids)
                                  :receipt execution-receipt})
   execution-receipt)
 
@@ -278,33 +327,40 @@
 (defn execute!
   "Run one governed execution; return the guarded read plus its receipt.
 
-  Rows are returned only after the ExecutionReceipt has been committed and
-  read back by `:commit!`. A policy refusal commits a deny receipt and then
-  rethrows, with the original refusal as the cause."
-  [{:keys [request query query-digest plan-digest cost result-root sign
+  Rows are returned only after the ExecutionReceipt has been signed, its
+  signature verified, and the record committed and read back by `:commit!`. A
+  policy refusal commits a deny receipt and then rethrows, with the original
+  refusal as the cause."
+  [{:keys [request manifest query value-cid verify plan-digest cost sign
            commit!]
     :as options}]
   (validate-shape! options)
   (contract/validate-request! request)
-  (contract/validate-manifest! (:manifest options))
-  (let [consume-nonce! (timing! options)]
+  (contract/validate-manifest! manifest)
+  (let [ids (identities options)
+        consume-nonce! (timing! options)
+        receipt! (fn [ids plan decision result-root]
+                   (let [unsigned (unsigned-receipt options ids plan decision
+                                                    result-root (cost))
+                         signed (signed! unsigned (sign unsigned))]
+                     (verified! :execution-receipt
+                                (verify (signature-request value-cid
+                                                           :execution-receipt
+                                                           signed)))
+                     (validated-bundle options ids signed)))]
     (bind-scope! request query)
-    (bind-digest! request (query-digest query))
+    (bind-digest! request (value-cid query))
+    (verified! :execution-manifest
+               (verify (signature-request value-cid :execution-manifest
+                                          manifest)))
     (nonce-verdict! request (consume-nonce! (:nonce request)))
     (let [captured (atom nil)
           admitted (atom false)
           sink (fn [{:keys [compiled rows]}]
-                 (let [signed (validated-bundle
-                               options
-                               (let [unsigned (unsigned-receipt
-                                               options
-                                               (checked-plan-digest
-                                                (plan-digest compiled))
-                                               :allow
-                                               (checked-result-root
-                                                (result-root rows))
-                                               (cost))]
-                                 (signed! unsigned (sign unsigned))))
+                 (let [signed (receipt! ids
+                                        (checked-plan-digest
+                                         (plan-digest compiled))
+                                        :allow (value-cid rows))
                        ack (durable-ack! (commit! signed))]
                    (reset! captured signed)
                    ack))
@@ -312,16 +368,13 @@
                    (guarded/read! (guarded-request options sink admitted))
                    (catch #?(:clj Exception :cljs :default) error
                      (if (authority-refusal? error @admitted)
-                       (let [unsigned (unsigned-receipt
-                                       options
-                                       ;; a refusal has no compiled query, so
-                                       ;; the host is asked for the digest of
-                                       ;; the absence of a plan rather than
-                                       ;; having one fabricated for it
-                                       (checked-plan-digest (plan-digest nil))
-                                       :deny nil (cost))
-                             signed (validated-bundle
-                                     options (signed! unsigned (sign unsigned)))]
+                       ;; a refusal has no compiled query, so the host is
+                       ;; asked for the digest of the absence of a plan
+                       ;; rather than having one fabricated for it
+                       (let [signed (receipt! ids
+                                              (checked-plan-digest
+                                               (plan-digest nil))
+                                              :deny nil)]
                          (refused! error (durable-ack! (commit! signed))))
                        (throw error))))]
       (assoc result :execution/receipt @captured))))
@@ -332,17 +385,26 @@
 
 #?(:cljs
    (defn- receipt-async
-     "Chain the host's answers — cost, then signature — into one receipt.
+     "Chain the host's answers — cost, signature, verification — into one
+     validated receipt.
 
-     Each may be a Promise: in a Worker a digest and a signature are both
-     `crypto.subtle` calls, so a synchronous-only path would force the host to
-     precompute them, which is exactly the shape this namespace refuses."
-     [options plan-digest decision result-root]
+     Each may be a Promise: in a Worker a signature and its verification are
+     both `crypto.subtle` calls, so a synchronous-only path would force the
+     host to precompute them, which is exactly the shape this namespace
+     refuses. The address function is not among them; a canonical value codec
+     is a pure function, and one that needs I/O is not one."
+     [{:keys [value-cid sign verify] :as options} ids plan-digest decision
+      result-root]
      (-> (then ((:cost options))
-               #(unsigned-receipt options plan-digest decision result-root %))
+               #(unsigned-receipt options ids plan-digest decision result-root %))
          (.then (fn [unsigned]
-                  (then ((:sign options) unsigned)
-                        #(signed! unsigned %)))))))
+                  (then (sign unsigned) #(signed! unsigned %))))
+         (.then (fn [signed]
+                  (-> (then (verify (signature-request value-cid
+                                                       :execution-receipt
+                                                       signed))
+                            #(verified! :execution-receipt %))
+                      (.then (fn [_] (validated-bundle options ids signed)))))))))
 
 #?(:cljs
    (defn- commit-async! [options signed]
@@ -353,33 +415,31 @@
    (defn execute-async!
      "The Worker path. Every host answer may be a Promise and each is awaited.
 
-     Rows are not returned while policy, evaluation, the nonce ledger, or the
-     receipt commit is still in flight."
-     [{:keys [request query query-digest plan-digest result-root] :as options}]
+     Rows are not returned while policy, evaluation, the nonce ledger, the
+     signature, its verification, or the receipt commit is still in flight."
+     [{:keys [request manifest query value-cid verify plan-digest] :as options}]
      (try
        (validate-shape! options)
        (contract/validate-request! request)
-       (contract/validate-manifest! (:manifest options))
-       (let [consume-nonce! (timing! options)
+       (contract/validate-manifest! manifest)
+       (let [ids (identities options)
+             consume-nonce! (timing! options)
              captured (atom nil)
              admitted (atom false)
              sink (fn [{:keys [compiled rows]}]
-                    (-> (js/Promise.all
-                         #js [(js/Promise.resolve (plan-digest compiled))
-                              (js/Promise.resolve (result-root rows))])
-                        (.then
-                         (fn [pair]
-                           (receipt-async options
-                                          (checked-plan-digest (aget pair 0))
-                                          :allow
-                                          (checked-result-root (aget pair 1)))))
-                        (.then #(validated-bundle options %))
+                    (-> (then (plan-digest compiled)
+                              #(receipt-async options ids
+                                              (checked-plan-digest %)
+                                              :allow (value-cid rows)))
                         (.then #(commit-async! options %))
                         (.then (fn [{:keys [ack receipt]}]
                                  (reset! captured receipt)
                                  ack))))]
          (bind-scope! request query)
-         (-> (then (query-digest query) #(bind-digest! request %))
+         (bind-digest! request (value-cid query))
+         (-> (then (verify (signature-request value-cid :execution-manifest
+                                              manifest))
+                   #(verified! :execution-manifest %))
              (.then (fn [_] (consume-nonce! (:nonce request))))
              (.then #(nonce-verdict! request %))
              (.then (fn [_] (guarded/read-async!
@@ -389,9 +449,9 @@
               (fn [error]
                 (if (authority-refusal? error @admitted)
                   (-> (then (plan-digest nil)
-                            #(receipt-async options (checked-plan-digest %)
+                            #(receipt-async options ids
+                                            (checked-plan-digest %)
                                             :deny nil))
-                      (.then #(validated-bundle options %))
                       (.then #(commit-async! options %))
                       (.then (fn [{:keys [ack]}] (refused! error ack))))
                   (js/Promise.reject error))))))
