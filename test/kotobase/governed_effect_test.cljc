@@ -29,7 +29,9 @@
 
 (defn proof [record] (str "sig:" (id/value-cid (dissoc record :signature))))
 
-(defn- verify [{:keys [payload-cid signature]}]
+(defn verify*
+  "The matching verifier. Public because the Worker suite defers it."
+  [{:keys [payload-cid signature]}]
   (= signature (str "sig:" payload-cid)))
 
 (defn nonce-ledger []
@@ -47,7 +49,7 @@
                 :epoch 7
                 :consume-nonce! (nonce-ledger)}
     :value-cid id/value-cid
-    :verify verify
+    :verify verify*
     :sign proof
     :cost (fn [] {:dependent-hops 1 :requests 2 :bytes 512
                   :cache-profile :cold})

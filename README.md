@@ -60,7 +60,8 @@ return only after the ExecutionReceipt has been committed and read back. It
 replaces the disclosure read path, which committed a receipt that answered one
 of the contract's eight fields.
 
-`kotobase.governed-effect` is the effect-side twin of `governed-read`: it
+`kotobase.governed-effect` (and `execute-async!` on Workers) is the
+effect-side twin of `governed-read`: it
 validates an EffectRequest, binds the envelope's code lock to the package
 being admitted, decides runtime authority, runs `kotobase.admission/guard!`
 unchanged — so the audit is still durable before the effect runs — and then
