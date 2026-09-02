@@ -4,15 +4,19 @@
   Every write names an exact immutable basis and returns a new Kotobase commit
   CID. No mutable ref is read or published. Concurrent writers therefore form
   explicit branches, while `receipt-at` replays and verifies one exact branch.
-  Raw credentials and identity evidence are outside this projection."
+  Raw credentials and identity evidence are outside this projection.
+
+  The disclosure read path that used to live here is gone; `execution-receipt-
+  sink` and `kotobase.governed-read` replace it. A guarded read now commits an
+  ExecutionReceipt, which answers every field of the version 1 contract, in
+  place of a disclosure receipt, which answered one — see
+  `docs/ADR-evidence-plane.md`."
   (:require #?(:clj [clojure.edn :as edn]
                :cljs [cljs.reader :as edn])
             [grant.causal-trust :as trust]
             [identity.adapters.ledger :as identity-ledger]
-            [kotobase.causal-trust :as compatibility]
             [kotobase.core :as core]
-            [kotobase.execution-contract :as contract]
-            [kotobase.guarded :as guarded]))
+            [kotobase.execution-contract :as contract]))
 
 (def format-version "kotobase.causal-record.v1")
 (def identity-stream "causal-identity")
@@ -257,22 +261,6 @@
                      (:causal.receipt/id receipt)
                      expected-basis [receipt])))
 
-(defn disclosure-receipt-sink
-  "Build a guarded-read sink whose acknowledgement includes the commit CID."
-  [database {:keys [template expected-basis-cid receipt-cid-fn at]
-             :as disclosure}]
-  (when-not (= #{:template :expected-basis-cid :receipt-cid-fn :at}
-               (set (keys disclosure)))
-    (reject! :invalid-disclosure-options {}))
-  (when-not (= expected-basis-cid (:causal.receipt/basis-cid template))
-    (reject! :disclosure-basis-mismatch {}))
-  (let [plan (compatibility/disclosure-plan template receipt-cid-fn at)]
-    (fn [execution]
-      (persist-decision!
-       database
-       (compatibility/disclosure-receipt plan execution)
-       expected-basis-cid))))
-
 (defn execution-receipt-sink
   "Build the `:commit!` that `kotobase.governed-execution` requires.
 
@@ -300,12 +288,3 @@
         (reject! :invalid-receipt-cid {}))
       (commit-records! database execution-stream receipt-id
                        expected-basis-cid [receipt]))))
-
-(defn read!
-  "Admit and evaluate at one basis, then commit the receipt before rows return."
-  [{:keys [database disclosure] :as request}]
-  (compatibility/require-query-capability! request)
-  (#?(:clj guarded/read!
-      :cljs guarded/read-async!)
-   (assoc (dissoc request :database :disclosure :receipt!)
-          :receipt! (disclosure-receipt-sink database disclosure))))

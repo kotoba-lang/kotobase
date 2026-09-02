@@ -134,8 +134,10 @@ thing:
   execution receipts and `admission`'s audit receipts still exist beside this
   one. `kotobase.evidence` now lifts what can be lifted and refuses what
   cannot, so the distance from each plane to this one is measured rather than
-  asserted — see [`ADR-evidence-plane.md`](ADR-evidence-plane.md) — but no
-  plane has been retired.
+  asserted, and the disclosure read path has since been deleted in favour of
+  `kotobase.governed-read` — see
+  [`ADR-evidence-plane.md`](ADR-evidence-plane.md). The two effect planes
+  remain.
 - **There is no cross-protocol conformance suite.** The contract's stated
   purpose is that Datalog, SQL, SPARQL, Cypher, GraphQL and Gremlin produce
   comparable evidence for the same semantic request. Nothing yet runs one
