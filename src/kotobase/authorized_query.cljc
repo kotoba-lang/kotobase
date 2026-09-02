@@ -172,6 +172,12 @@
   canonical codec, see `receipt-projection`), so it asks the host to write the
   receipt and refuses the rows unless the host says it is durable.
 
+  RECEIPT! is handed the rows as well as their count. A receipt that binds
+  only a row count is not evidence about the result: `kotobase.execution-
+  contract`'s `:result/root` has to be computed by the host's canonical codec
+  over what was actually served, and the sink is the only place that runs
+  before the rows are released. Sinks persist the root, not the rows.
+
   The returned provenance is ready to bind into an execution identity; raw
   query execution is unavailable from this namespace."
   [evaluate! receipt! compiled]
@@ -182,7 +188,8 @@
   (let [rows (evaluate! (:query compiled) (:decision compiled))]
     (when-not (vector? rows) (reject! :invalid-result {}))
     (durable-result compiled rows
-                    (receipt! {:compiled compiled :row-count (count rows)}))))
+                    (receipt! {:compiled compiled :rows rows
+                               :row-count (count rows)}))))
 
 #?(:cljs
    (defn execute-async!
@@ -203,7 +210,8 @@
             (fn [rows]
               (when-not (vector? rows) (reject! :invalid-result {}))
               (-> (js/Promise.resolve
-                   (receipt! {:compiled compiled :row-count (count rows)}))
+                   (receipt! {:compiled compiled :rows rows
+                              :row-count (count rows)}))
                   (.then #(durable-result compiled rows %))))))
        (catch :default error
          (js/Promise.reject error)))))

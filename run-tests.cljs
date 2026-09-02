@@ -27,6 +27,7 @@
             [kotobase.code-graph-test]
             [kotobase.erasure-test]
             [kotobase.execution-contract-test]
+            [kotobase.governed-execution-test]
             [kotobase.guarded-test]
             [kotobase.sealed-store-test]
             [kotobase.store-test]))

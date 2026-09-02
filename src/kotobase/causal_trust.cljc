@@ -133,7 +133,10 @@
    {:keys [compiled row-count] :as execution}]
   (when-not (= #{:template :receipt-cid-fn :at} (set (keys plan)))
     (reject! :invalid-disclosure-plan {}))
-  (when-not (= #{:compiled :row-count} (set (keys execution)))
+  ;; `:rows` is present because the gateway hands the served rows to its sink
+  ;; (see `kotobase.authorized-query/execute!`); this receipt binds the count,
+  ;; not the rows, and deliberately does not read them
+  (when-not (= #{:compiled :rows :row-count} (set (keys execution)))
     (reject! :invalid-read-execution {}))
   (when-not (and (integer? row-count) (not (neg? row-count)))
     (reject! :invalid-row-count {}))

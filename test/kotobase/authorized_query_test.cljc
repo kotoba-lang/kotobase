@@ -72,7 +72,9 @@
 
 (deftest the-sink-is-told-what-it-is-recording
   ;; a receipt sink that is handed nothing cannot write a receipt about
-  ;; anything; it has to see the compiled query and how much came back
+  ;; anything; it has to see the compiled query, how much came back, and the
+  ;; rows themselves — a result root is a fact about the rows, and a receipt
+  ;; that binds only their count is not evidence about the result
   (let [seen (atom nil)
         compiled (query/compile! authorize request)]
     (query/execute! (fn [_ _] [{:invoice/id "INV-42" :invoice/amount 5000}])
@@ -80,8 +82,9 @@
                       (reset! seen payload)
                       {:receipt/durable? true :receipt/cid "bafy-receipt"})
                     compiled)
-    (is (= #{:compiled :row-count} (set (keys @seen))))
+    (is (= #{:compiled :rows :row-count} (set (keys @seen))))
     (is (= 1 (:row-count @seen)))
+    (is (= [{:invoice/id "INV-42" :invoice/amount 5000}] (:rows @seen)))
     (is (= "acme" (get-in @seen [:compiled :query :scope :tenant])))
     (is (= :payment-review (get-in @seen [:compiled :query :scope :purpose])))))
 
