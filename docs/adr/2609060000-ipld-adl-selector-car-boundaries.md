@@ -1,8 +1,9 @@
 # ADR-2609060000: IPLD layouts, traversal, and physical packing
 
-- Status: Proposed
+- Status: Accepted (architecture contract; implementation remains partial)
 - Date: 2026-09-06
 - Scope: Cross-repository implementation contract; capability gates remain open.
+- Authority: [superproject ADR-2609060000](https://github.com/com-junkawasaki/root/blob/main/90-docs/adr/2609060000-ipld-adl-selector-car-boundaries.edn).
 
 ## Context
 
@@ -106,10 +107,25 @@ and evaluator version, and authorization scope where applicable. Physical plans,
 Selectors, and packs have separate identities; a Plan CID alone is not a stable
 definition of query semantics.
 
-## Rollout and evidence
+## Current implementation and evidence
 
-1. Correct new opaque-object CIDs in `kotobase-projection`; preserve old reads.
-2. Document Ayatori's existing verified CAR block-source boundary and its limits.
+| Change | Merged evidence | Validation |
+| --- | --- | --- |
+| Architecture contract | [kotobase #78](https://github.com/kotoba-lang/kotobase/pull/78) | Documentation review |
+| Raw pack/ciphertext CIDs | [projection #2](https://github.com/kotoba-lang/kotobase-projection/pull/2), `73311ba82702626d4474ac341343aeabbbd4f0a5` | CLJS and JVM: each 36 tests / 171 assertions; consumer CLJS: 17 / 77 |
+| Retrieval contract | [Ayatori #20](https://github.com/kotoba-lang/ayatori/pull/20) | Documentation review |
+| CAR bounds/candidate handling | [Ayatori #21](https://github.com/kotoba-lang/ayatori/pull/21), `2ce321e7fd09eecefcc56a30706d6f206add8a32` | CLJS and JVM pack subset: each 24 tests / 158 assertions |
+
+All reported local assertions passed. These are compatibility-library results,
+not canonical Kotoba native/Wasm qualification or a hosted CI receipt.
+Merging a library does not deploy a Worker or advance every consumer dependency.
+Production rollout remains unverified until the deployment owner records the
+resolved dependency closure, built artifact, Worker version, and smoke results.
+
+## Remaining rollout
+
+1. Advance and verify actual deployable consumer dependencies for the merged raw-CID fix; old reads remain supported.
+2. Add CAR index parsing resource limits and full `open-pack` header qualification.
 3. Implement bounded Selector replay using an explicit supported subset and
    fixtures for missing blocks, shared links, unsupported forms, and limits.
 4. Introduce OrderedMap adapters with cross-substrate snapshot/range oracles.
