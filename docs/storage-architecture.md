@@ -101,9 +101,15 @@ Compaction writes a new pack and repoints the catalog.
 pack holds this CID* is answered by `:block/pack` / `:block/file-offset` /
 `:block/frame-length` datoms, and *where inside that pack* by the CARv2
 `MultihashIndexSorted` the pack carries. The first is on the datom plane
-because it has to join with commits, tenants and lake objects (ADR-260726:
-join reach is exactly one ref). It is a **projection** — deleting it may only
-cost speed, because scanning the packs rebuilds it.
+because it has to join with commits, tenants and lake objects. What decides
+that reach is whether those are composed into one pattern source at query
+time, not how many refs they live under: root **ADR-2809040800** supersedes
+ADR-260726's "exactly one ref", which was an implementation ceiling read as a
+property of the data model. The catalog is therefore not required to share a
+ref with commits — it is required to be composed with them, and a catalog in a
+store nothing composes is an island whichever ref it sits in. It is a
+**projection** — deleting it may only cost speed, because scanning the packs
+rebuilds it.
 
 Large columnar objects do **not** go in packs. A Parquet or Arrow file stays a
 large object read through `:presigned-transfer` and a footer range; packing is
