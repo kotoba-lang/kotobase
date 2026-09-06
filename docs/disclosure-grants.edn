@@ -1,0 +1,67 @@
+{:contract/id :kotobase.disclosure/v1
+ :status :implemented-host-adapter
+ :architecture-adr "com-junkawasaki/root:90-docs/adr/2609061400-recipient-bound-disclosure.edn"
+ :entrypoints [kotobase.disclosure-grant/release!
+               kotobase.disclosure-grant/release-async!
+               kotobase.disclosure-grant/delivery-verification]
+ :identities
+ {:resource "Raw CIDv1/SHA-256 of the exact encrypted octets. This is NOT the CID of a decrypted datom or an index block that contains the ciphertext."
+  :grant "Canonical kotoba.value.v1 CID of the whole signed grant. Different recipients get different grant CIDs; identical decrypted values remain identical."
+  :key-envelope "Canonical value CID of provider metadata plus encoded wrapped-key ciphertext. Referenced by grant; held privately until release."
+  :signature "signing-cid(kind, record) domain-separates the unsigned canonical value. Signing and encryption keys are distinct."
+  :binding "binding(grant) excludes signature and key-envelope-cid, avoiding a cyclic content address; the crypto provider binds it as authenticated info/AAD."
+  :parent "Canonical value CID string of the signed parent. These are application-level references, not IPLD Link values: a generic ipld/links walker does not discover them. The delivery protocol receives a bounded root-to-leaf vector and validates every edge."}
+ :issue-order
+ ["Encrypt each independently disclosable object with its own random data key. Publish only ciphertext."
+  "Authenticate the recipient's signing identity and independently bind its encryption-key fingerprint; public information cannot forge signatures. Human bootstrap remains Passkey-only."
+  "Construct grant fields excluding key-envelope-cid/signature, compute binding, and ask the qualified hybrid provider to seal the data key for that recipient using that binding."
+  "Include provider metadata, epoch, binding and nonempty encoded octet vector :sealed/ciphertext in the envelope. Compute its value CID and sign the grant with that CID included."
+  "Expose the signed grant as appropriate; retain the actual envelope at the delivery service. Publish plaintext or recipient envelopes only if intentionally giving up the corresponding access/audit boundary."
+  "Recipient signs the exact grant CID, ciphertext CID, receiving-key fingerprint, tenant, principal, audience, epoch, nonce and expiration."
+  "Delivery service supplies trusted context independently, verifies every signature and narrowing edge, admits local policy, atomically consumes the scoped nonce, then signs/commits/rereads before returning the envelope."
+  "Recipient validates delivery bindings and trusted executor signature before authenticated unwrapping/decryption. Return delivery receipts to the owner's audit view; CID existence alone is not discovery."]
+ :host-ports
+ {:context "Exact host-authenticated tenant/owner/principal/recipient-key/resource/policy/audience/executor/now/epoch. Never trust a copy supplied by a requester. Time and epoch describe the decision snapshot."
+  :verify! "Resolve key/id + algorithm from trusted principal/tenant/epoch/record-kind state, then verify payload-cid. Unknown, revoked or wrong-role keys fail closed; only literal true succeeds. Supports Promise on async entry."
+  :authorize! "Call existing grant/local authority for this exact chain and request, including individual grant revocations and recipient-key status. Receives the whole chain so revoking an ancestor can refuse descendants. Must return literal true."
+  :consume-nonce! "Atomic compare-and-insert on tenant/principal/audience/nonce across service replicas. Only literal true is fresh. A spent nonce remains spent after later failures; retries use a newly signed nonce."
+  :sign! "Sign the supplied domain-separated payload-cid as the configured executor. Never accept the requester as an executor by default."
+  :commit! "Store the signed event durably at its canonical value CID and return {:receipt/durable? true :receipt/cid expected-cid}. No mutable head may select canonical truth."
+  :read! "Fetch the committed record by exact receipt CID; must reproduce the signed event. A successful write acknowledgement alone is insufficient."
+  :open! "Ayatori host crypto provider: bind the recipient-key fingerprint to the actual local secret key, authenticate binding during unwrap, authenticate content ciphertext, then return Arrangement encoded bytes. Metadata validation does not establish KEM correctness or provider qualification."}
+ :envelope-required
+ [:envelope/provider :envelope/algorithms :envelope/kem? :envelope/hybrid?
+  :envelope/epoch :envelope/binding :sealed/ciphertext]
+ :limits
+ {:max-chain-length 32
+  :resource-scope :one-exact-ciphertext-cid
+  :operations #{:decrypt :propose-update}
+  :executed-operation :decrypt
+  :delegation "Issuer equals parent recipient; child operation set is a subset, time window is contained, depth strictly decreases, tenant/owner/resource/policy/epoch are unchanged."
+  :bounds "Ingress must bound wire bytes, collection/string lengths and concurrency before decoding or signature verification. The 32-link limit is not a byte quota."
+  :cost "A chain of L links uses L grant verifications plus request and receipt verification on the service; client additionally verifies the receipt. Ciphertext hashing is O(bytes). Each uncached delivery entails durable write/read, so this is not a per-row latency improvement. Batch delivery requires a separate exact-coverage contract."
+  :revocation "Reject future official deliveries at current epoch/policy. Already-released envelopes, keys and plaintext remain usable offline."
+  :audit "The event is key-envelope-release-authorized: committed before sending, it can exist even if delivery fails. It is not a countersigned receipt, successful-decryption proof, or evidence of human comprehension."
+  :privacy "Do not publish raw plaintext CIDs, identities, grant ancestry, or access logs merely to obtain content addressing. Public low-entropy plaintext hashes permit guessing. Protect metadata and define retention."
+  :storage "IPFS availability/immutability is not global log completeness. Owner observation, witness/checkpoint distribution, retention and grant discovery remain deployment duties."
+  :query "Keep governed-read and visibility checks. Key delivery does not authorise an arbitrary query, expose index/blinding keys, or accept a proposed update."}
+ :verification
+ {:runtime "nbb 1.5.212 / Node 24.19.0; pinned repository dependencies"
+  :kotobase {:tests 13 :assertions 59 :failures 0 :errors 0
+             :command "nbb --classpath <kotobase src:test plus pinned dependency src paths> scripts/test-disclosure.cljs"}
+  :coverage ["owner-to-recipient and narrowing delegation"
+             "wrong parent/delegator, operation/time amplification, wrong recipient and epoch"
+             "actual Ed25519 signatures and tampering"
+             "Promise sequencing, scoped nonce replay, failed durable write/readback"
+             "signed hybrid downgrades and envelope substitution"]
+  :not-measured [:jvm-compat-suite :native-kotoba :wasm-build :live-network
+                 :hybrid-kem-provider-qualification :production-durable-store]}
+ :rollout-gates
+ [{:id :key-provider :status :pending
+   :required "Connect a qualified existing hybrid provider and actual key custody; verify malformed ciphertext, wrong key, wrong AAD and downgrade failures with provider test vectors."}
+  {:id :delivery-host :status :pending
+   :required "Wire trusted principal registry, policy compiler, freshness/nonce ledger and canonical durable store at a real endpoint; verify owner-visible event retrieval."}
+  {:id :native-component :status :pending
+   :required "Whole-component native/Wasm qualification under fleet Q9 rules. This CLJC adapter is not evidence of native consumer cutover."}
+  {:id :advanced-crypto :status :deferred
+   :required "PRE only with an explicit offline-owner requirement and per-object scope/collusion analysis. ABE/FE/fingerprinting are separate profiles; no claim that ordinary CID grants trace leaked plaintext."}]}

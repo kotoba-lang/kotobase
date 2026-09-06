@@ -1,5 +1,28 @@
 # kotobase
 
+`kotobase.disclosure-grant` adds recipient-bound key delivery to the encrypted
+CID plane. `release!` and `release-async!` verify an owner-rooted delegation
+chain and a signed, audience-bound request; check current policy/epoch and a
+scoped one-use nonce; then sign, commit and reread a delivery receipt before
+returning the encrypted key envelope. This is key-delivery evidence, not an
+`ExecutionReceipt` or proof of human reading. Queries still use `governed-read`.
+
+Grants carry the envelope's **CID only**. The envelope itself must remain behind
+the delivery service until the receipt is durable. Publishing recipient-encrypted
+keys beforehand would let recipients bypass this audit boundary. Ciphertext
+blocks may be public; sensitive grant/receipt metadata needs protected storage.
+
+The implementation reuses the canonical value codec, authority window and
+production hybrid crypto policy. It does not implement a KEM, PRE scheme,
+identity registry or live endpoint. Host ports supply qualified crypto, trusted
+key lookup and durable immutable storage. The first profile grants one exact
+encrypted object's raw CID; partial disclosure needs separately encrypted
+objects. `:propose-update` is delegation vocabulary, not an update execution API.
+
+See [`docs/disclosure-grants.edn`](docs/disclosure-grants.edn) for the contract
+and remaining rollout gates. Ayatori's `recipient-decryptor[-async]` consumes
+this protocol at the existing `:decrypt-fn` seam.
+
 [![CI](https://github.com/kotoba-lang/kotobase/actions/workflows/ci.yml/badge.svg)](https://github.com/kotoba-lang/kotobase/actions/workflows/ci.yml)
 
 The primary API is now `kotobase.core`: `open`, `transact!`, `datoms`, `q`,
