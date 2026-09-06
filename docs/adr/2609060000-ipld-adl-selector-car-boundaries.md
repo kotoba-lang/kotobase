@@ -115,6 +115,9 @@ definition of query semantics.
 | Raw pack/ciphertext CIDs | [projection #2](https://github.com/kotoba-lang/kotobase-projection/pull/2), `73311ba82702626d4474ac341343aeabbbd4f0a5` | CLJS and JVM: each 36 tests / 171 assertions; consumer CLJS: 17 / 77 |
 | Retrieval contract | [Ayatori #20](https://github.com/kotoba-lang/ayatori/pull/20) | Documentation review |
 | CAR bounds/candidate handling | [Ayatori #21](https://github.com/kotoba-lang/ayatori/pull/21), `2ce321e7fd09eecefcc56a30706d6f206add8a32` | CLJS and JVM pack subset: each 24 tests / 158 assertions |
+| CAR index resource limits + characteristics | [io-ipld-car #2](https://github.com/kotoba-lang/io-ipld-car/pull/2), `79436d12da879356dcc47387bfacf991354eac99` | nbb and JVM: each 24 tests / 85 assertions. Control on pre-fix sources fails the out-of-range reads, then is killed at 60s (exit 124) by the non-terminating case |
+| Bounded pack index read + header qualification | [Ayatori #23](https://github.com/kotoba-lang/ayatori/pull/23), `d3857791284c0ec3c63c57dcff35f4b50a059f1d` | nbb 123 tests / 384 assertions; JVM pack subset 30 / 171. Behaviour-only control fails the named cases |
+| Raw-CID consumer audit + pin advance | [kotobase-peer #111](https://github.com/kotoba-lang/kotobase-peer/pull/111), `8d04b799a53df6a7de85555614461bc6a5a489d2` | cljs 251 tests / 1006 assertions; JVM 251 / 760. Control fails with the named CID mismatch on a raw CID |
 
 All reported local assertions passed. These are compatibility-library results,
 not canonical Kotoba native/Wasm qualification or a hosted CI receipt.
@@ -122,15 +125,55 @@ Merging a library does not deploy a Worker or advance every consumer dependency.
 Production rollout remains unverified until the deployment owner records the
 resolved dependency closure, built artifact, Worker version, and smoke results.
 
+## Rollout items 1 and 2: landed 2026-09-06
+
+Both were completed by measuring first, and both measurements found a defect
+that reading would not have. Neither was a missing feature; each was a check
+that could not be performed returning the value of a check that passed.
+
+**Item 1 (consumer dependencies) was a condition already carried.** The
+raw-CID fix's own migration note required auditing consumers that assume every
+CID is DAG-CBOR before merging. It merged. The audit found one, in the GC
+path: both reachability walkers in `kotobase-peer`'s object store verified an
+object by recomputing `ipld/cid`, which is DAG-CBOR unconditionally. A raw
+block's correct bytes recompute to a different string -- same digest,
+`bafkrei` against `bafyrei` -- so a correct store read as a corrupt one. That
+code already declined to *decode* packs as DAG-CBOR and said so in its
+docstring; it still *addressed* them that way, so the half that changed was
+the half nothing was checking. `ipld/cid-codec` exists for exactly this, and
+`ipld/get-verified-block` already checked codec before recomputing. These two
+sites did not. The `kotobase-projection` pin advanced in the same commit, from
+a SHA 14 commits behind main that predated the fix; either change alone leaves
+the store readable only by accident. `kotobase-worker-shell` and
+`gftdcojp/tia` consume projection by source path rather than by SHA, so they
+follow the west pin, which advanced with it.
+
+**Item 2 (CAR index limits and header qualification) found a
+non-termination.** Measured on nbb, a CARv2 index header claiming one code
+group and carrying none of it did not terminate: an out-of-range `read-u32-le`
+returns `NaN`, and `NaN` compares false against every guard, including this
+library's own range check. The loop never yielded, so a timer racing it never
+fired -- in a Worker that is the isolate, not a slow request. The JVM threw an
+untyped `ArrayIndexOutOfBounds` on the same bytes, so the two runtimes
+disagreed, which is the one thing `ipld.car.bytes` exists to prevent.
+Reachable from `open-pack`, which fetched the index as `bytes=N-` and so
+learned its size only by already holding it. Fixed in the codec owner (bounded
+fixed-width reads, declared counts checked against remaining bytes, a
+`:max-records` ceiling, and typed failures so a short buffer cannot decode as
+an empty index) and in the reader (a closed index range, an oversized-response
+refusal, and refusal of a declared CARv2 characteristic instead of ignoring
+it).
+
+Every new assertion was shown to discriminate, with controls constructed to
+fail for the named reason rather than any reason.
+
 ## Remaining rollout
 
-1. Advance and verify actual deployable consumer dependencies for the merged raw-CID fix; old reads remain supported.
-2. Add CAR index parsing resource limits and full `open-pack` header qualification.
-3. Implement bounded Selector replay using an explicit supported subset and
+1. Implement bounded Selector replay using an explicit supported subset and
    fixtures for missing blocks, shared links, unsupported forms, and limits.
-4. Introduce OrderedMap adapters with cross-substrate snapshot/range oracles.
-5. Add optional FBL and Arrow-buffer integration with byte-range/lifetime tests.
-6. Add versioned ADL signalling after implementations and negotiation exist.
+2. Introduce OrderedMap adapters with cross-substrate snapshot/range oracles.
+3. Add optional FBL and Arrow-buffer integration with byte-range/lifetime tests.
+4. Add versioned ADL signalling after implementations and negotiation exist.
 
 No new ADL, Selector engine, Arrow execution path, or native/Wasm capability is
 claimed by this ADR. Measure bytes fetched, request count, peak memory, and
