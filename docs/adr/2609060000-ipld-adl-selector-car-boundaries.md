@@ -119,6 +119,7 @@ definition of query semantics.
 | Bounded pack index read + header qualification | [Ayatori #23](https://github.com/kotoba-lang/ayatori/pull/23), `d3857791284c0ec3c63c57dcff35f4b50a059f1d` | nbb 123 tests / 384 assertions; JVM pack subset 30 / 171. Behaviour-only control fails the named cases |
 | Raw-CID consumer audit + pin advance | [kotobase-peer #111](https://github.com/kotoba-lang/kotobase-peer/pull/111), `8d04b799a53df6a7de85555614461bc6a5a489d2` | cljs 251 tests / 1006 assertions; JVM 251 / 760. Control fails with the named CID mismatch on a raw CID |
 | Bounded Selector replay | [io-ipld-car #3](https://github.com/kotoba-lang/io-ipld-car/pull/3), `6a67a81f2c47e8dc5945c19d289a9043afdbb2eb` | nbb and JVM: each 35 tests / 116 assertions. Removing the root binding turns exactly one test red, returning nil where the mismatch type was expected |
+| OrderedMap contract + oracle | [kotobase-storage #3](https://github.com/kotoba-lang/kotobase-storage/pull/3), `6dd559849cc25da3893863dfc4b173914521b107` | JVM 74 tests / 244 assertions. Three controls, each red only where it should be: removing the bound adaptation, the incomparable-substrate refusal, and the vacuity report |
 
 All reported local assertions passed. These are compatibility-library results,
 not canonical Kotoba native/Wasm qualification or a hosted CI receipt.
@@ -211,11 +212,55 @@ Ayatori does not yet expose replay through its own retrieval surface. ADL
 signalling is still absent, so explicitly supported ADL versions remains
 item 4 rather than something replay already enforces.
 
+## OrderedMap adapters: contract landed 2026-09-06
+
+The bound disagreement this section warned about is real and was measured:
+`prolly-tree.core/scan-range` filters with `(neg? (compare k hi))` while
+`kotobase.projection/decode-range` uses `(not (pos? (compare key upper)))`.
+Two ordered range APIs differing on exactly one row -- the one whose key
+equals the upper bound. A facade taking either as a range would include or
+drop that row depending on which substrate answered, with nothing in the
+result saying which had.
+
+`kotobase.storage.ordered-map` is the contract. Five dimensions must be
+declared -- comparator, bounds, snapshot, duplicate precedence, tombstones --
+and none has a default, following `ref-profiles`: undeclared is an
+unanswered question, not a default. Missing and unrecognised declarations
+throw apart, so an unfinished adapter and a misconfigured one do not look
+the same. The canonical form is half-open and an inclusive-upper substrate
+is adapted by filtering rather than by rewriting the bound, because
+rewriting needs the successor or predecessor of a string and neither exists
+for arbitrary strings.
+
+Two refusals carry more weight than the adaptation. A substrate declaring
+`:opaque-unordered` -- HMAC-blinded keys are the case here -- has an encoding
+whose lexical order is not the database's order, so ranges over it are
+refused rather than answered wrongly. And two substrates declaring different
+comparator, duplicate or tombstone semantics are not compared at all: an
+oracle that ran anyway would yield a disagreement meaning only that they
+were asked different questions, or an agreement meaning only that the
+difference did not show on this data. Differing bounds is allowed, being the
+case the oracle exists for.
+
+`:vacuous?` is reported because agreement on no rows is the cheapest
+possible green: two substrates that both failed to load, or were both handed
+a range outside their data, agree perfectly and prove nothing.
+
+The contract holds no dependency on a substrate -- an adapter is a value the
+caller supplies -- so substrates depend on it and never the reverse.
+
+What this does NOT establish: agreement here is agreement about ROWS. As
+this ADR already states, LSM compaction or a rebuilt Prolly tree can change
+index roots while every visible row is identical, so the oracle is not a
+claim about CIDs and a logical identity independent of those roots still
+needs its own commitment. Merkle-LSM has not yet declared a profile, so the
+cross-substrate comparison so far runs a real Prolly tree against an
+inclusive-upper adapter carrying the projection predicate.
+
 ## Remaining rollout
 
-1. Introduce OrderedMap adapters with cross-substrate snapshot/range oracles.
-2. Add optional FBL and Arrow-buffer integration with byte-range/lifetime tests.
-3. Add versioned ADL signalling after implementations and negotiation exist.
+1. Add optional FBL and Arrow-buffer integration with byte-range/lifetime tests.
+2. Add versioned ADL signalling after implementations and negotiation exist.
 
 No new ADL, Selector engine, Arrow execution path, or native/Wasm capability is
 claimed by this ADR. Measure bytes fetched, request count, peak memory, and
