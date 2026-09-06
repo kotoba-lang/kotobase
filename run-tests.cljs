@@ -25,6 +25,8 @@
             [kotobase.classification-agreement-test]
             [kotobase.classification-test]
             [kotobase.conformance-test]
+            [kotobase.disclosure-grant-test]
+            [kotobase.disclosure-worker-test]
             [kotobase.effect-contract-test]
             [kotobase.erasure-test]
             [kotobase.evidence-test]
