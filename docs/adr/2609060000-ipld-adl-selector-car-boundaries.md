@@ -120,6 +120,7 @@ definition of query semantics.
 | Raw-CID consumer audit + pin advance | [kotobase-peer #111](https://github.com/kotoba-lang/kotobase-peer/pull/111), `8d04b799a53df6a7de85555614461bc6a5a489d2` | cljs 251 tests / 1006 assertions; JVM 251 / 760. Control fails with the named CID mismatch on a raw CID |
 | Bounded Selector replay | [io-ipld-car #3](https://github.com/kotoba-lang/io-ipld-car/pull/3), `6a67a81f2c47e8dc5945c19d289a9043afdbb2eb` | nbb and JVM: each 35 tests / 116 assertions. Removing the root binding turns exactly one test red, returning nil where the mismatch type was expected |
 | OrderedMap contract + oracle | [kotobase-storage #3](https://github.com/kotoba-lang/kotobase-storage/pull/3), `6dd559849cc25da3893863dfc4b173914521b107` | JVM 74 tests / 244 assertions. Three controls, each red only where it should be: removing the bound adaptation, the incomparable-substrate refusal, and the vacuity report |
+| FBL byte layout + Arrow byte source | [io-ipld #33](https://github.com/kotoba-lang/io-ipld/pull/33), `e0c9585d344dd12cb4b3461506b65ce8c529efd2`; [org-apache-arrow #2](https://github.com/kotoba-lang/org-apache-arrow/pull/2), `53166467110b30463bec967ed69f9cac15dedc26` | FBL: nbb 108 tests / 5554 assertions, JVM 135 / 5715. Arrow: 7 / 52 and full suite 49 / 192. Four controls, each red only where it should be |
 
 All reported local assertions passed. These are compatibility-library results,
 not canonical Kotoba native/Wasm qualification or a hosted CI receipt.
@@ -257,10 +258,53 @@ needs its own commitment. Merkle-LSM has not yet declared a profile, so the
 cross-substrate comparison so far runs a real Prolly tree against an
 inclusive-upper adapter carrying the projection predicate.
 
+## FBL and Arrow-buffer integration: landed 2026-09-06
+
+`ipld.fbl` presents one logical byte sequence over many blocks, so a large
+object can be read by range instead of as a whole: a footer out of a
+gigabyte costs the path plus one leaf. `arrow.ipld` is the adapter, and it
+is only an adapter -- `arrow.source` already asks the world for a range and
+nothing else, so the two contracts already agreed on what a range means.
+
+Measured on the pyarrow fixture at 64-byte chunks: reading one column
+touches 7 of 32 distinct blocks, opening touches fewer, and asking for the
+size touches exactly one -- the root.
+
+The load-bearing property is a refusal rather than the pruning. Every
+byte-source contract here means exactly a half-open range, and Arrow
+computes buffer offsets from the footer without re-checking the width it got
+back -- so a layout that quietly returned fewer bytes would shift every field
+after it and still parse. FBL refuses at four levels: a missing block, a
+declared length disagreeing with a leaf's actual bytes, a range past the end
+(refused rather than clamped, since clamping turns a caller's arithmetic
+error into a short buffer), and an assertion that the assembled width equals
+the requested one, as a floor under causes not yet thought of.
+
+Neither layer claims zero-copy where it cannot have it. A range inside one
+leaf could be borrowed; one spanning two leaves provably cannot, because the
+bytes are not contiguous anywhere. `read-range` reports which case it was,
+and the Arrow byte source declines `IByteViewSource` rather than implementing
+it and copying underneath -- that would make the copy boundary invisible at
+the layer that exists to make it visible.
+
+Two defects were measured while writing this, both of which had already
+produced a silent wrong answer. Under ClojureScript, `aget` on a Clojure
+vector returns undefined and `(bit-and undefined 0xff)` is 0, so a byte
+reader written for typed arrays returned zeros rather than failing -- every
+leaf became identical, so every leaf CID became identical, and a
+missing-block test passed for the wrong reason. And `ipld.core` round-trips a
+native byte container back as one and a vector back as a vector, so a leaf
+built from a vector encodes as an array of integers and is not Bytes.
+
+What this does not establish: nothing here negotiates an ADL version, so
+this is a specified subset rather than a conformance claim, and versioned
+signalling remains the last item. Large Arrow objects keep the existing
+direct object/range path -- FBL is optional, as this ADR already states, and
+no rewrite is implied.
+
 ## Remaining rollout
 
-1. Add optional FBL and Arrow-buffer integration with byte-range/lifetime tests.
-2. Add versioned ADL signalling after implementations and negotiation exist.
+1. Add versioned ADL signalling after implementations and negotiation exist.
 
 No new ADL, Selector engine, Arrow execution path, or native/Wasm capability is
 claimed by this ADR. Measure bytes fetched, request count, peak memory, and
