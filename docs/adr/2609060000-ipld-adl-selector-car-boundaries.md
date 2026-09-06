@@ -118,6 +118,7 @@ definition of query semantics.
 | CAR index resource limits + characteristics | [io-ipld-car #2](https://github.com/kotoba-lang/io-ipld-car/pull/2), `79436d12da879356dcc47387bfacf991354eac99` | nbb and JVM: each 24 tests / 85 assertions. Control on pre-fix sources fails the out-of-range reads, then is killed at 60s (exit 124) by the non-terminating case |
 | Bounded pack index read + header qualification | [Ayatori #23](https://github.com/kotoba-lang/ayatori/pull/23), `d3857791284c0ec3c63c57dcff35f4b50a059f1d` | nbb 123 tests / 384 assertions; JVM pack subset 30 / 171. Behaviour-only control fails the named cases |
 | Raw-CID consumer audit + pin advance | [kotobase-peer #111](https://github.com/kotoba-lang/kotobase-peer/pull/111), `8d04b799a53df6a7de85555614461bc6a5a489d2` | cljs 251 tests / 1006 assertions; JVM 251 / 760. Control fails with the named CID mismatch on a raw CID |
+| Bounded Selector replay | [io-ipld-car #3](https://github.com/kotoba-lang/io-ipld-car/pull/3), `6a67a81f2c47e8dc5945c19d289a9043afdbb2eb` | nbb and JVM: each 35 tests / 116 assertions. Removing the root binding turns exactly one test red, returning nil where the mismatch type was expected |
 
 All reported local assertions passed. These are compatibility-library results,
 not canonical Kotoba native/Wasm qualification or a hosted CI receipt.
@@ -167,13 +168,54 @@ it).
 Every new assertion was shown to discriminate, with controls constructed to
 fail for the named reason rather than any reason.
 
+## Rollout item 3 (Selector replay): landed 2026-09-06
+
+Replay is the verifier counterpart to `selection-car`, and it is not that
+function read backwards: a producer may trust its own store, a verifier may
+trust nothing it was handed. Three things it must not believe, each silent by
+default.
+
+`car/decode` does not verify. It keys blocks by the CID the frame *declares*
+and never rehashes them, so an archive whose frame claims one CID while
+carrying other bytes decodes without complaint; measured, the bytes returned
+under the declared CID recompute to a different one. CARv2's `read-frame` does
+verify, which is the trap -- the habit does not carry from v2 to v1. Replay
+inherits verification from `select-blocks`, which rehashes what it fetches.
+
+A CAR's roots header is a claim by whoever wrote the archive; the caller's
+root is what binds the graph. An archive missing a block the traversal needs
+is no answer, not a shorter one.
+
+Every failure is thrown and typed apart -- `:ipld/car-root-mismatch`,
+`:ipld/invalid-selector`, `:ipld/missing-block`, `:ipld/cid-mismatch`,
+`:ipld/resource-limit` -- because a completion flag in a returned map is a
+value a caller can drop on the floor. The selector is taken as canonical
+DAG-CBOR rather than an executable form, so a verifier can hash it and agree
+with a producer about it, and decoding it is where an unsupported form is
+refused instead of quietly matching less. Blocks the archive carried but the
+traversal never reached are reported as `:unused` rather than rejected, since
+logical selection legitimately loads shared blocks holding other rows -- but
+they are unverified, only touched blocks having been rehashed.
+
+Fixtures cover the four names this item asked for. Missing blocks: a leaf, an
+interior branch, and an empty archive. Shared links: one leaf reached down two
+distinct branches, asserting both the match count and the two paths, because
+deduplication is by CID for bytes and limit accounting only -- identity of
+bytes is not identity of traversal state. Unsupported forms: unknown
+top-level and nested members, a non-selector map, and a parentless recursive
+edge. Limits: each of the four budgets exhausted, the same traversal
+completing when the budget allows it, and an absent budget refused rather
+than read as unlimited.
+
+Ayatori does not yet expose replay through its own retrieval surface. ADL
+signalling is still absent, so explicitly supported ADL versions remains
+item 4 rather than something replay already enforces.
+
 ## Remaining rollout
 
-1. Implement bounded Selector replay using an explicit supported subset and
-   fixtures for missing blocks, shared links, unsupported forms, and limits.
-2. Introduce OrderedMap adapters with cross-substrate snapshot/range oracles.
-3. Add optional FBL and Arrow-buffer integration with byte-range/lifetime tests.
-4. Add versioned ADL signalling after implementations and negotiation exist.
+1. Introduce OrderedMap adapters with cross-substrate snapshot/range oracles.
+2. Add optional FBL and Arrow-buffer integration with byte-range/lifetime tests.
+3. Add versioned ADL signalling after implementations and negotiation exist.
 
 No new ADL, Selector engine, Arrow execution path, or native/Wasm capability is
 claimed by this ADR. Measure bytes fetched, request count, peak memory, and
