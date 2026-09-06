@@ -56,7 +56,7 @@ operation, and Neo4j performance remain explicit open evidence gates.
 
 ## The physical plane: block → pack → object
 
-The proposed [IPLD/ADL/Selector responsibility contract](adr/2609060000-ipld-adl-selector-car-boundaries.md)
+The accepted [IPLD/ADL/Selector responsibility contract](adr/2609060000-ipld-adl-selector-car-boundaries.md)
 extends this architecture with selective retrieval and explicit codec migration
 rules. Its unimplemented capabilities remain open gates.
 
