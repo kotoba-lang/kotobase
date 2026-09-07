@@ -1,8 +1,27 @@
 (ns kotobase.hostile-fault-model-test
   (:require [clojure.test :refer [deftest is]]
             [kotobase.local :as local]
-            [kotobase.store :as store])
-  (:import [java.util Collections Random]))
+            [kotobase.store :as store]))
+
+;; Deterministic 64-bit LCG + Fisher-Yates, pure clojure — replaces
+;; java.util.Random + Collections/shuffle (JVM-only).
+(def ^:private rng-state (atom 0x4b4f544f42415345))
+
+(defn- rng-next []
+  (swap! rng-state (fn [s]
+                     (let [m 9223372036854775807]
+                       (mod (+' (*' s 6364136223846793005)
+                                1442695040888963407)
+                            m)))))
+
+(defn- shuffle-seq [coll]
+  (let [v (vec coll)]
+    (loop [v v i (dec (count v))]
+      (if (pos? i)
+        (let [j (mod (rng-next) (inc i))
+              v (assoc v i (v j) j (v i))]
+          (recur v (dec i)))
+        v))))
 
 (defn request [id revision key value]
   {:tx-id id :expected-revision revision
@@ -21,16 +40,14 @@
     db))
 
 (deftest retry-duplicate-and-reorder-converge
-  (let [rng (Random. 0x4b4f544f42415345)
-        expected (into {} (map #(vector (str "k-" %) %) (range 20)))]
+  (let [expected (into {} (map #(vector (str "k-" %) %) (range 20)))]
     (dotimes [_ 100]
-      (let [order (java.util.ArrayList. (range 20))]
-        (Collections/shuffle order rng)
-        (let [db (apply-logical-operations order)
-              snapshot (store/-snapshot db
-                                        {:collections ["docs"] :streams []})]
-          (is (= expected (get-in snapshot [:docs "docs"])))
-          (is (= 20 (:revision snapshot))))))))
+      (let [order (shuffle-seq (range 20))
+            db (apply-logical-operations order)
+            snapshot (store/-snapshot db
+                                      {:collections ["docs"] :streams []})]
+        (is (= expected (get-in snapshot [:docs "docs"])))
+        (is (= 20 (:revision snapshot)))))))
 
 (deftest partitioned-writers-conflict-then-retry-without-loss
   (let [db (local/local-store)
