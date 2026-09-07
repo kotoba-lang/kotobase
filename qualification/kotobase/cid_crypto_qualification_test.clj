@@ -4,7 +4,8 @@
             [clojure.java.shell :as shell]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            [kotoba.compiler.core :as compiler])
+            [kotoba.compiler.core :as compiler]
+            [sha2.core :as sha2])
   (:import [java.nio.charset StandardCharsets]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
@@ -99,11 +100,12 @@
     :else (throw (ex-info "CBOR uint exceeds v2 page bound" {:value value}))))
 
 (defn- sha256-hex [payload-hex]
-  (let [digest (java.security.MessageDigest/getInstance "SHA-256")
-        bytes (byte-array
-               (map #(unchecked-byte (Integer/parseInt % 16))
-                    (map (partial apply str) (partition 2 payload-hex))))]
-    (bytes->hex (.digest digest bytes))))
+  ;; Pure SHA-256 via kotobase.digest (org-nist-sha2 backend) over the
+  ;; byte vector decoded from the payload hex — no java.security.
+  (let [bytes (mapv #(Integer/parseInt % 16)
+                    (map (partial apply str) (partition 2 payload-hex)))]
+    (sha2/sha256-hex bytes)))
+
 
 (defn- base32-lower [^bytes input]
   (let [alphabet "abcdefghijklmnopqrstuvwxyz234567"]

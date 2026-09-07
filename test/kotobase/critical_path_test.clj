@@ -14,28 +14,31 @@
   As `.cljc` it linted for both platforms, where `file-seq` and `slurp` do not
   exist -- so `clojure -M:lint` failed and took CI red from 2026-07-30, while
   the 80 tests underneath it kept passing. The extension was the bug."
-  (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
             [clojure.test :refer [deftest is]]))
 
-(defn- sources []
-  (->> (file-seq (io/file "src"))
+;; Host adapter boundary: the only place this test touches filesystem types.
+;; Everything below consumes plain strings/vectors.
+(defn- host-walk
+  "JVM host adapter: recursive file walk -> vectors of [path text]. Replaces
+  file-seq/clojure.java.io spread across the scan logic."
+  [root]
+  (->> (file-seq (clojure.java.io/file root))
        (filter #(.isFile %))
-       (filter #(re-find #"\.clj[cs]?$" (.getName %)))))
+       (mapv (fn [f] [(.getPath f) (slurp f)]))))
 
 (deftest ipfs-is-not-on-the-plane-s-critical-path
-  (let [offenders (->> (sources)
-                       (keep (fn [f]
-                               (let [text (slurp f)]
-                                 (when (re-find #"(?i)\bipfs\b" text)
-                                   (.getPath f)))))
+  (let [offenders (->> (host-walk "src")
+                       (keep (fn [[path text]]
+                               (when (re-find #"(?i)\bipfs\b" text)
+                                 path)))
                        vec)]
     (is (= [] offenders)
         (str "the plane's own sources now mention IPFS: " offenders
              ". It is a provider adapter (kotobase-storage-ipfs) and a served "
              "surface (kotobase-protocols), and the core must not need it.")))
 
-  (let [deps (slurp (io/file "deps.edn"))]
+  (let [deps (slurp "deps.edn")]
     (is (not (str/includes? deps "kotobase-storage-ipfs"))
         "the core has taken a dependency on the IPFS adapter")
     ;; and the storage port itself stays provider-neutral: the core depends on
