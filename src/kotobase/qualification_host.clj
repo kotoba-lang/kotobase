@@ -108,3 +108,9 @@
 (defn os-name [] (System/getProperty "os.name"))
 (defn os-arch [] (System/getProperty "os.arch"))
 (defn env-or [name default] (or (System/getenv name) default))
+
+(defn child-env
+  "Current process environment as a map, with overrides merged — the base for
+  spawning child processes without reaching for System/getenv at call sites."
+  [overrides]
+  (merge (into {} (System/getenv)) overrides))

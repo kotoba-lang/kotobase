@@ -77,8 +77,7 @@
                        (let [offset (get-in compiled [:artifact :exports export-name :offset])
                              {:keys [exit out err]}
                              (host/exec! [loader code (str offset) "0" isa "-"
-                                          {:env (assoc (into {} (System/getenv))
-                                                       "KEXE_STRUCTURED_REPORT" "1")}])]
+                                          {:env (host/child-env {"KEXE_STRUCTURED_REPORT" "1"})}])]
                          (when-not (zero? exit)
                            (throw (ex-info "Kotoba native execution failed"
                                            {:export export-name :exit exit :stderr err})))
