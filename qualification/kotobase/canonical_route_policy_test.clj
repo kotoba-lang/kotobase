@@ -1,9 +1,9 @@
 (ns kotobase.canonical-route-policy-test
-  (:require [clojure.java.io :as io]
+  (:require 
             [clojure.test :refer [deftest is testing]]))
 
 (deftest official-qualification-ci-does-not-install-a-rust-toolchain
-  (let [workflow (slurp (io/file ".github/workflows/ci.yml"))]
+  (let [workflow (slurp ".github/workflows/ci.yml")]
     (testing "the formal Kotoba qualification remains independent of Rust"
       (doseq [forbidden [#"dtolnay/rust-toolchain"
                          #"\bcargo\b"
@@ -13,7 +13,7 @@
             (str "forbidden canonical CI toolchain pattern: " forbidden))))))
 
 (deftest external-traversal-has-no-positional-provider-inventory
-  (let [source (slurp (io/file "kotoba/cid_external_dag_traversal.kotoba"))]
+  (let [source (slurp "kotoba/cid_external_dag_traversal.kotoba")]
     (testing "the provider supplies immutable CID blocks, not node ordinals"
       (is (not (re-find #"node[0-9]" source)))
       (is (not (.contains source "index:")))
@@ -25,7 +25,7 @@
       (is (not (.contains source "external-closure-7"))))))
 
 (deftest external-transaction-replay-keeps-provider-semantics-outside
-  (let [source (slurp (io/file "kotoba/cid_external_transaction_replay.kotoba"))]
+  (let [source (slurp "kotoba/cid_external_transaction_replay.kotoba")]
     (testing "the guest accepts only immutable object reads and hashing"
       (is (.contains source ":hash/sha256"))
       (is (.contains source ":object/get-stream"))
