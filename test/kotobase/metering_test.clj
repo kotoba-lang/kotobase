@@ -126,14 +126,26 @@
   ;; the two numbers equal, so a meter that simply copied `:requests` would
   ;; pass every other test in this file. Here two reads are genuinely in
   ;; flight at once and the caller waited exactly once
-  (let [entered (java.util.concurrent.CountDownLatch. 2)
-        release (java.util.concurrent.CountDownLatch. 1)
+  ;; clojure.core promise/deliver replaces java.util.concurrent.CountDownLatch:
+  ;; two entered-promises (one per in-flight read) and one release promise.
+  (let [entered [(promise) (promise)]
+        release (promise)
+        next-index (atom 0)
+        claiming? (atom true)
         delegate (reify
                    storage/IBlockStore
                    (-put-blocks! [_ _] nil)
                    (-get-blocks [_ _]
-                     (.countDown entered)
-                     (.await release)
+                     ;; claim a slot atomically — but only for the first two
+                     ;; reads: a remove-realized? claim races (both concurrent
+                     ;; reads can deliver into promise 1), and unbounded claims
+                     ;; would index past the two promises. The third read runs
+                     ;; after release and must not block.
+                     (when @claiming?
+                       (let [i (swap! next-index inc)]
+                         (when (<= i (count entered))
+                           (deliver (nth entered (dec i)) true))))
+                     (when @claiming? @release)
                      {})
 
                    storage/IRefStore
@@ -146,8 +158,9 @@
         overlapping [(future (storage/-get-blocks backend ["a"]))
                      (future (storage/-get-blocks backend ["b"]))]]
     ;; both are inside the provider before either can return
-    (.await entered)
-    (.countDown release)
+    (doseq [p entered] (deref p))
+    (reset! claiming? false)
+    (deliver release true)
     (run! deref overlapping)
     (is (= 2 (:requests (read))))
     (is (= 1 (:dependent-hops (read))))
