@@ -1,15 +1,11 @@
 (ns kotobase.transparency-log
   "Key-epoch-aware transparency checkpoints and receipt retention."
-  (:require [clojure.set :as set])
-  (:import [java.math BigInteger]
-           [java.security MessageDigest]))
+  (:require [clojure.set :as set]
+            [kotobase.digest :as digest]))
 
 (def genesis (apply str (repeat 64 "0")))
 
-(defn digest [value]
-  (format "%064x"
-          (BigInteger. 1 (.digest (MessageDigest/getInstance "SHA-256")
-                                  (.getBytes (pr-str value) "UTF-8")))))
+(def digest digest/digest)
 
 (defn append-leaf [state receipt]
   (let [index (count (:leaves state))
