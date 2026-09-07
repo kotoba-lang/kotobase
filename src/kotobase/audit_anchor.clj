@@ -3,18 +3,15 @@
 
   Cryptographic signing is injected by the deployment key service; this module
   binds each receipt to its predecessor and an independently observed anchor."
-  (:require [clojure.edn :as edn])
-  (:import [java.math BigInteger]
-           [java.security MessageDigest]))
+  (:require [clojure.edn :as edn]
+            [kotobase.digest :as digest]))
 
 (def policy-path "qualification/audit-anchor-policy.edn")
 (def genesis "GENESIS")
 
 (defn read-policy [] (edn/read-string (slurp policy-path)))
 (defn digest [receipt]
-  (format "%064x" (BigInteger. 1 (.digest (MessageDigest/getInstance "SHA-256")
-                                            (.getBytes (pr-str (dissoc receipt :receipt/signature))
-                                                       "UTF-8")))))
+  (digest/digest (dissoc receipt :receipt/signature)))
 
 (defn evaluate
   [policy {:keys [receipts anchor verify-signature]}]
