@@ -1,14 +1,12 @@
 (ns kotobase.cid-crypto-qualification-test
+  "All host filesystem/process access goes through the ONE adapter namespace
+  `kotobase.qualification-host` — no java.* or clojure.java.* here."
   (:require [clojure.edn :as edn]
-            [clojure.java.io :as io]
-            [clojure.java.shell :as shell]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [kotoba.compiler.core :as compiler]
-            [sha2.core :as sha2])
-  (:import [java.nio.charset StandardCharsets]
-           [java.nio.file Files]
-           [java.nio.file.attribute FileAttribute]))
+            [kotobase.qualification-host :as host]
+            [sha2.core :as sha2]))
 
 (def ^:private capability-policy
   {:allow #{[:cap/call 1] [:cap/call 3]}})
@@ -19,33 +17,28 @@
 (def ^:private execution-metadata {:fuel 1048576})
 
 (defn- project-file [& segments]
-  (let [root (or (System/getenv "KOTOBASE_SOURCE_ROOT") ".")]
-    (apply io/file root segments)))
+  (apply host/path-join (host/env-or "KOTOBASE_SOURCE_ROOT" ".") segments))
 
 (defn- compiler-root []
-  (let [resource (io/resource "kotoba/compiler/core.clj")]
-    (when-not (= "file" (.getProtocol resource))
-      (throw (ex-info "compiler source must be a checked-out file resource"
-                      {:resource (str resource)})))
-    (-> resource .toURI io/file
-        .getParentFile .getParentFile .getParentFile .getParentFile)))
+  ;; resource is <root>/src/kotoba/compiler/core.clj — four parents up to <root>.
+  (let [resource-path (host/resource-path! "kotoba/compiler/core.clj")]
+    (-> resource-path host/path-parent host/path-parent host/path-parent host/path-parent)))
 
 (defn- host-target []
-  (case (str/lower-case (System/getProperty "os.arch"))
+  (case (str/lower-case (host/os-arch))
     ("aarch64" "arm64") [:aarch64-kotoba-v1 "aarch64"]
     ("amd64" "x86_64") [:x86_64-kotoba-v1 "x86_64"]
     (throw (ex-info "unsupported native qualification host"
-                    {:os-arch (System/getProperty "os.arch")}))))
+                    {:os-arch (host/os-arch)}))))
 
 (defn- temp-dir []
-  (.toFile (Files/createTempDirectory "kotobase-cid-crypto-"
-                                      (make-array FileAttribute 0))))
+  (host/temp-dir! "kotobase-cid-crypto-"))
 
 (defn- delete-tree! [root]
-  (doseq [file (reverse (file-seq root))] (io/delete-file file true)))
+  (host/delete-tree! root))
 
 (defn- write-bytes! [file bytes]
-  (with-open [out (io/output-stream file)] (.write out ^bytes bytes)))
+  (host/write-bytes! file bytes))
 
 (defn- parse-results [output]
   (into {}
@@ -71,10 +64,10 @@
   (apply str (map #(format "%02x" (bit-and (int %) 0xff)) value)))
 
 (defn- utf8-hex [value]
-  (bytes->hex (.getBytes ^String value StandardCharsets/UTF_8)))
+  (bytes->hex (byte-array (host/utf8-bytes value))))
 
 (defn- cbor-text-hex [value]
-  (let [length (alength (.getBytes ^String value StandardCharsets/UTF_8))]
+  (let [length (count (host/utf8-bytes value))]
     (str (if (< length 24) (format "%02x" (+ 0x60 length))
            (str "78" (format "%02x" length)))
          (utf8-hex value))))
@@ -127,13 +120,11 @@
             (str output)))))))
 
 (defn- cid-from-digest-hex [digest-hex]
-  (let [prefix (byte-array [(byte 0x01) (byte 0x71) (byte 0x12) (byte 0x20)])
-        digest (byte-array
-                (map #(unchecked-byte (Integer/parseInt % 16))
-                     (map (partial apply str) (partition 2 digest-hex))))
-        cid-bytes (byte-array (+ (alength prefix) (alength digest)))]
-    (System/arraycopy prefix 0 cid-bytes 0 (alength prefix))
-    (System/arraycopy digest 0 cid-bytes (alength prefix) (alength digest))
+  ;; pure byte-vector concat — no System/arraycopy
+  (let [prefix [0x01 0x71 0x12 0x20]
+        digest (mapv #(Integer/parseInt % 16)
+                     (map (partial apply str) (partition 2 digest-hex)))
+        cid-bytes (byte-array (into prefix digest))]
     (str "b" (base32-lower cid-bytes))))
 
 (defn- cid-for-hex [payload-hex]
@@ -423,7 +414,7 @@
      [(str "block:" (second keys)) (str marker "81" (first keys))]]))
 
 (defn- write-block-provider! [directory entries]
-  (let [file (io/file directory "cid-block-provider.tsv")]
+  (let [file (host/path-join directory "cid-block-provider.tsv")]
     (spit file (str (str/join "\n" (map #(str (first %) "\t" (second %)) entries))
                     "\n"))
     file))
@@ -459,11 +450,11 @@
   (let [invocations (normalize-invocations export-names)
         compiled (compiler/compile-source source :wasm32-kotoba-v1
                                           policy execution-metadata)
-        artifact (io/file directory (str stem ".wasm"))
-        browser-host (io/file (compiler-root) "runtime/browser-host.mjs")
-        encoded (.encodeToString (java.util.Base64/getEncoder) ^bytes (:bytes compiled))
+        artifact (host/path-join directory (str stem ".wasm"))
+        browser-host (host/path-join (compiler-root) "runtime/browser-host.mjs")
+        encoded (host/b64-encode (:bytes compiled))
         javascript
-        (str "import(" (pr-str (str (.toURI browser-host))) ").then(async m=>{"
+        (str "import(" (pr-str (host/path-uri-string browser-host)) ").then(async m=>{"
              "const c=await import('node:crypto');"
              "const bytes=Buffer.from(process.argv[1],'base64');"
              "const seed=Buffer.from('0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20','hex');"
@@ -483,7 +474,7 @@
              "}).catch(e=>{console.error(e);process.exit(70)})")]
     (write-bytes! artifact (:bytes compiled))
     (let [{:keys [exit out err]}
-          (shell/sh "node" "--input-type=module" "-e" javascript encoded)]
+          (host/exec! ["node" "--input-type=module" "-e" javascript encoded])]
       (when-not (zero? exit)
         (throw (ex-info "Kotoba Wasm crypto execution failed"
                         {:exit exit :stdout out :stderr err})))
@@ -492,8 +483,8 @@
        :bytes (alength ^bytes (:bytes compiled))}))))
 
 (defn- openssl-flags []
-  (if (= "Mac OS X" (System/getProperty "os.name"))
-    (let [{:keys [exit out err]} (shell/sh "brew" "--prefix" "openssl@3")]
+  (if (= "Mac OS X" (host/os-name))
+    (let [{:keys [exit out err]} (host/exec! ["brew" "--prefix" "openssl@3"])]
       (when-not (zero? exit)
         (throw (ex-info "OpenSSL 3 is required for native qualification"
                         {:exit exit :stderr err})))
@@ -509,19 +500,18 @@
         [target isa] (host-target)
         compiled (compiler/compile-source source target
                                           policy execution-metadata)
-        code (io/file directory (str stem ".bin"))
-        loader (io/file directory "kexe-provider-loader")
+        code (host/path-join directory (str stem ".bin"))
+        loader (host/path-join directory "kexe-provider-loader")
         qualification-root (project-file "qualification" "native")
-        compiler-tools (io/file (compiler-root) "tools")
-        loader-source (io/file qualification-root "kexe_provider_loader.c")
-        provider-source (io/file qualification-root "kotobase_crypto_provider.c")
-        build (apply shell/sh
-                     (concat ["cc" "-std=c11" "-O2" "-Wall" "-Wextra" "-Werror"
-                              (str "-I" (.getPath qualification-root))
-                              (str "-I" (.getPath compiler-tools))
-                              (.getPath loader-source) (.getPath provider-source)
-                              "-o" (.getPath loader)]
-                             (openssl-flags)))
+        compiler-tools (host/path-join (compiler-root) "tools")
+        loader-source (host/path-join qualification-root "kexe_provider_loader.c")
+        provider-source (host/path-join qualification-root "kotobase_crypto_provider.c")
+        build (host/exec! (concat ["cc" "-std=c11" "-O2" "-Wall" "-Wextra" "-Werror"
+                                   (str "-I" qualification-root)
+                                   (str "-I" compiler-tools)
+                                   loader-source provider-source
+                                   "-o" loader]
+                                  (openssl-flags)))
         export-symbols (mapv #(assoc % :symbol (symbol (:export %))) invocations)]
     (when-not (zero? (:exit build))
       (throw (ex-info "Kotoba native crypto loader build failed" build)))
@@ -534,14 +524,13 @@
                 (map (fn [{:keys [label symbol args]}]
                        (let [offset (get-in compiled [:artifact :exports symbol :offset])
                              {:keys [exit out err]}
-                             (apply shell/sh
-                                    (concat [(.getPath loader) (.getPath code)
-                                             (str offset) (str (count args)) isa allow-csv]
-                                            (map str args)
-                                            [:env (cond-> {"KEXE_STRUCTURED_REPORT" "1"}
-                                                    block-provider-file
-                                                    (assoc "KOTOBASE_BLOCK_PROVIDER_FILE"
-                                                           (.getPath block-provider-file)))]))]
+                             (host/exec! (concat [loader code
+                                                  (str offset) (str (count args)) isa allow-csv]
+                                                 (map str args)
+                                                 [{:env (cond-> {"KEXE_STRUCTURED_REPORT" "1"}
+                                                          block-provider-file
+                                                          (assoc "KOTOBASE_BLOCK_PROVIDER_FILE"
+                                                                 block-provider-file))}]))]
                          (when-not (zero? exit)
                            (throw (ex-info "Kotoba native crypto execution failed"
                                            {:export symbol :args args

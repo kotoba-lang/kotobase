@@ -1,54 +1,42 @@
 (ns kotobase.cid-graph-replay-qualification-test
+  "Qualification: fixed-vector CID graph replay runs on real wasm + native
+  backends. All host filesystem/process access goes through the ONE adapter
+  namespace `kotobase.qualification-host` — no java.* or clojure.java.*
+  here; paths are strings, bytes are arrays, processes are {:exit :out :err}."
   (:require [clojure.edn :as edn]
-            [clojure.java.io :as io]
-            [clojure.java.shell :as shell]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            [kotoba.compiler.core :as compiler])
-  (:import [java.nio.file Files]
-           [java.nio.file.attribute FileAttribute]))
+            [kotoba.compiler.core :as compiler]
+            [kotobase.qualification-host :as host]))
 
 (defn- source-file []
-  (or (some-> (System/getenv "KOTOBASE_SOURCE_ROOT")
-              (io/file "kotoba/cid_graph_replay.kotoba")
-              (#(when (.isFile %) %)))
-      (let [candidate (io/file "kotoba/cid_graph_replay.kotoba")]
-        (when (.isFile candidate) candidate))
+  (or (some-> (host/env-or "KOTOBASE_SOURCE_ROOT" nil)
+              (host/path-join "kotoba/cid_graph_replay.kotoba")
+              (#(when (host/file-exists? %) %)))
+      (let [candidate "kotoba/cid_graph_replay.kotoba"]
+        (when (host/file-exists? candidate) candidate))
       (throw (ex-info "Kotobase CID graph replay source not found" {}))))
 
 (defn- compiler-root []
-  (let [resource (io/resource "kotoba/compiler/core.clj")]
-    (when-not (= "file" (.getProtocol resource))
-      (throw (ex-info "compiler source must be a checked-out file resource"
-                      {:resource (str resource)})))
-    (-> resource .toURI io/file
-        .getParentFile .getParentFile .getParentFile .getParentFile)))
+  ;; resource is <root>/src/kotoba/compiler/core.clj — four parents up to <root>.
+  (let [resource-path (host/resource-path! "kotoba/compiler/core.clj")]
+    (-> resource-path host/path-parent host/path-parent host/path-parent host/path-parent)))
 
 (defn- host-target []
-  (case (str/lower-case (System/getProperty "os.arch"))
+  (case (str/lower-case (host/os-arch))
     ("aarch64" "arm64") [:aarch64-kotoba-v1 "aarch64"]
     ("amd64" "x86_64") [:x86_64-kotoba-v1 "x86_64"]
     (throw (ex-info "unsupported native qualification host"
-                    {:os-arch (System/getProperty "os.arch")}))))
-
-(defn- temp-dir []
-  (.toFile (Files/createTempDirectory "kotobase-cid-graph-"
-                                      (make-array FileAttribute 0))))
-
-(defn- delete-tree! [root]
-  (doseq [file (reverse (file-seq root))] (io/delete-file file true)))
-
-(defn- write-bytes! [file bytes]
-  (with-open [out (io/output-stream file)] (.write out ^bytes bytes)))
+                    {:os-arch (host/os-arch)}))))
 
 (defn- run-wasm [source directory]
   (let [compiled (compiler/compile-source source :wasm32-kotoba-v1 {:allow #{}})
-        artifact (io/file directory "cid-graph-replay.wasm")
-        browser-host (io/file (compiler-root) "runtime/browser-host.mjs")
-        encoded (.encodeToString (java.util.Base64/getEncoder) ^bytes (:bytes compiled))]
-    (write-bytes! artifact (:bytes compiled))
+        artifact (host/path-join directory "cid-graph-replay.wasm")
+        browser-host (host/path-join (compiler-root) "runtime/browser-host.mjs")
+        encoded (host/b64-encode (:bytes compiled))]
+    (host/write-bytes! artifact (:bytes compiled))
     (let [javascript
-          (str "import(" (pr-str (str (.toURI browser-host))) ").then(async m=>{"
+          (str "import(" (pr-str (host/path-uri-string browser-host)) ").then(async m=>{"
                "const bytes=Buffer.from(process.argv[1],'base64');"
                "for(const name of ['check-cid-order','check-forward','check-reversed',"
                "'check-shuffled-ancestry','check-repeated-merge','check-criss-cross']){"
@@ -56,7 +44,7 @@
                "console.log(name+'='+h.instance.exports[name]().toString());}"
                "}).catch(e=>{console.error(e);process.exit(70)})")
           {:keys [exit out err]}
-          (shell/sh "node" "--input-type=module" "-e" javascript encoded)]
+          (host/exec! ["node" "--input-type=module" "-e" javascript encoded])]
       (when-not (zero? exit)
         (throw (ex-info "Kotoba Wasm execution failed"
                         {:exit exit :stdout out :stderr err})))
@@ -71,26 +59,26 @@
 (defn- run-native [source directory]
   (let [[target isa] (host-target)
         compiled (compiler/compile-source source target {:allow #{}})
-        code (io/file directory "cid-graph-replay.bin")
-        loader (io/file directory "kexe-loader")
-        loader-source (io/file (compiler-root) "tools/kexe_loader.c")
-        build (shell/sh "cc" "-std=c11" "-O2" "-Wall" "-Wextra" "-Werror"
-                        (.getPath loader-source) "-o" (.getPath loader))
+        code (host/path-join directory "cid-graph-replay.bin")
+        loader (host/path-join directory "kexe-loader")
+        loader-source (host/path-join (compiler-root) "tools/kexe_loader.c")
+        build (host/exec! ["cc" "-std=c11" "-O2" "-Wall" "-Wextra" "-Werror"
+                           loader-source "-o" loader])
         export-names ['check-cid-order 'check-forward 'check-reversed
                       'check-shuffled-ancestry 'check-repeated-merge
                       'check-criss-cross]]
     (when-not (zero? (:exit build))
       (throw (ex-info "Kotoba native loader build failed" build)))
-    (write-bytes! code (byte-array (map #(unchecked-byte (bit-and (int %) 0xff))
-                                        (get-in compiled [:artifact :code]))))
+    (host/write-bytes! code (byte-array (map #(unchecked-byte (bit-and (int %) 0xff))
+                                             (get-in compiled [:artifact :code]))))
     (let [results
           (into {}
                 (map (fn [export-name]
                        (let [offset (get-in compiled [:artifact :exports export-name :offset])
                              {:keys [exit out err]}
-                             (shell/sh (.getPath loader) (.getPath code) (str offset) "0" isa "-"
-                                       :env (assoc (into {} (System/getenv))
-                                                   "KEXE_STRUCTURED_REPORT" "1"))]
+                             (host/exec! [loader code (str offset) "0" isa "-"
+                                          {:env (assoc (into {} (System/getenv))
+                                                       "KEXE_STRUCTURED_REPORT" "1")}])]
                          (when-not (zero? exit)
                            (throw (ex-info "Kotoba native execution failed"
                                            {:export export-name :exit exit :stderr err})))
@@ -103,8 +91,8 @@
        :isa isa})))
 
 (deftest fixed-cid-frontier-graph-semantics-executes-on-rust-free-backends
-  (let [source (slurp (source-file))
-        directory (temp-dir)]
+  (let [source (host/read-string! (source-file))
+        directory (host/temp-dir! "kotobase-cid-graph-")]
     (try
       (let [wasm (run-wasm source directory)
             native (run-native source directory)]
@@ -127,4 +115,4 @@
                   :native native
                   :fixed-scalarized-ancestry-matrix-qualified true
                   :native-decoded-dag-traversal-qualified false})))
-      (finally (delete-tree! directory)))))
+      (finally (host/delete-tree! directory)))))
