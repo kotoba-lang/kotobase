@@ -11,7 +11,7 @@
 ;; cannot quietly diverge from what kotobase actually runs.
 
 (ns setup
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             ["child_process" :as cp]
             ["fs" :as fs]
             ["path" :as path]))

@@ -33,7 +33,7 @@
 ;; why the interesting variable is bytes-per-request, not round trips.
 
 (ns run-lake-chunk
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cbor.core :as cbor]
             [kotobase.capability.workload :as w]
             [kotobase.remote.profile :as rp]

@@ -9,7 +9,7 @@
 ;; on the first disagreement.
 
 (ns verify
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [kotobase.capability :as cap]
             [kotobase.capability.blockstore :as bs]
             [kotobase.capability.workload :as w]
