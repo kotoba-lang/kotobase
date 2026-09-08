@@ -12,7 +12,7 @@
 ;;   --out FILE       write the full result EDN here     (default results/latest.edn)
 
 (ns run
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [kotobase.capability :as cap]
             [kotobase.capability.blockstore :as bs]
             [kotobase.capability.workload :as w]

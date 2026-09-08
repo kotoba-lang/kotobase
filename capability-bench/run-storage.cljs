@@ -10,7 +10,7 @@
 ;;   --out FILE      result EDN                 (default results/storage.edn)
 
 (ns run-storage
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.set]
             [cbor.core :as cbor]
             [multiformats.core :as mf]

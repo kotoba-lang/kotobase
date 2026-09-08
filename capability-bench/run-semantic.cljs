@@ -12,7 +12,7 @@
 ;;   --out FILE        result EDN                     (default results/semantic.edn)
 
 (ns run-semantic
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [kotoba.codebase.semantic-code :as sc]
             [kotobase.capability.blockstore :as bs]
             [kotobase.semantic.corpus :as corpus]

@@ -38,7 +38,7 @@
 ;; numbers, not because it invalidates them.
 
 (ns run-descent
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [prolly-tree.core :as pt]
             [kotobase.capability.workload :as w]
             [kotobase.remote.profile :as rp]
