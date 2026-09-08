@@ -11,7 +11,7 @@
   Capabilities are declared per backend and checked at call time
   (`guard`): claiming one you do not implement fails loudly rather than
   producing a plausible measurement."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (def ^:const unsupported ::unsupported)
 

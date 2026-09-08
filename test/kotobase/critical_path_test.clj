@@ -14,7 +14,7 @@
   As `.cljc` it linted for both platforms, where `file-seq` and `slurp` do not
   exist -- so `clojure -M:lint` failed and took CI red from 2026-07-30, while
   the 80 tests underneath it kept passing. The extension was the bug."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is]]))
 
 ;; Host adapter boundary: the only place this test touches filesystem types.

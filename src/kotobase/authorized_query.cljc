@@ -5,7 +5,7 @@
   The injected policy compiler determines which projection and scope may reach
   the injected Datalog evaluator at one immutable basis."
   (:require [clojure.set :as set]
-            [clojure.string :as str]))
+            [kotoba.lang.text :as str]))
 
 (def query-keys #{:find :where :scope :limit})
 (def scope-keys #{:tenant :resources :purpose :basis})

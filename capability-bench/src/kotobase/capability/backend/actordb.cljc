@@ -20,7 +20,7 @@
   (each tree is 1/K the size, so a path rewrite is shorter) and buys parallel
   sync, and it pays for that at every cross-shard read and every cross-shard
   transaction."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [prolly-tree.core :as pt]
             [prolly-tree.diff :as ptd]
             [ipld.core :as ipld]

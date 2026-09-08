@@ -10,7 +10,7 @@
 
   Both shapes are content-addressed and both live in the same block store, so
   the comparison is chunk layout, not storage technology."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cbor.core :as cbor]
             [ipld.core :as ipld]
             [ipld.link :as link]
