@@ -8,7 +8,7 @@
   deletion window re-packs with its successor. Unchanged keys can still land
   in a new block. That is the number this shape exists to put next to Prolly's
   14.32 puts/txn and 273-block 200-txn delta."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [prolly-tree.core :as pt]
             [prolly-tree.diff :as ptd]
             [kotobase.merkle.bplus :as b+]

@@ -18,7 +18,7 @@
   scheme that changes CID when you reindent has no build cache. A scheme that
   changes CID when you rename a local has a build cache that misses on
   cosmetic edits, and — worse — propagates that miss to every dependent."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cbor.core :as cbor]
             [multiformats.core :as mf]
             [kotoba.codebase.semantic-code :as sc]))

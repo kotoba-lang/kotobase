@@ -2,7 +2,7 @@
   "All host filesystem/process access goes through the ONE adapter namespace
   `kotobase.qualification-host` — no java.* or clojure.java.* here."
   (:require [clojure.edn :as edn]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [kotoba.compiler.core :as compiler]
             [kotobase.qualification-host :as host]
@@ -25,7 +25,7 @@
     (-> resource-path host/path-parent host/path-parent host/path-parent host/path-parent)))
 
 (defn- host-target []
-  (case (str/lower-case (host/os-arch))
+  (case (str/lower (host/os-arch))
     ("aarch64" "arm64") [:aarch64-kotoba-v1 "aarch64"]
     ("amd64" "x86_64") [:x86_64-kotoba-v1 "x86_64"]
     (throw (ex-info "unsupported native qualification host"

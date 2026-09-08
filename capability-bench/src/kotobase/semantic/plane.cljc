@@ -9,7 +9,7 @@
   not. And a pure definition's result is a function of its CID, while an
   effectful one's is not — the point where a cache stops being a cache and
   starts being a fabrication."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cbor.core :as cbor]
             [prolly-tree.core :as pt]
             [ipld.link :as link]

@@ -15,7 +15,7 @@
   What it costs: every transaction rewrites a path in *three* trees and then a
   commit block — the write amplification the other architectures avoid by
   giving something up."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [prolly-tree.core :as pt]
             [prolly-tree.diff :as ptd]
             [ipld.core :as ipld]

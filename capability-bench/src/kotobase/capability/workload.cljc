@@ -4,7 +4,7 @@
   Same seed -> same entities, same attribute values, same update sequence,
   same query keys. Without that, a comparison between architectures is a
   comparison between random number generators."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 ;; ── deterministic PRNG (xorshift32) ────────────────────────────────────────
 
