@@ -49,6 +49,7 @@
                 approval-required? approvals-fn approval-context approval-audit!
                 request-bounds-required? request-size-fn max-request-bytes
                 request-bounds-audit!
+                classification-required? classification-audit!
                 hardware-signing-required? hardware-signing-evidence
                 hardware-signing-audit!
                 remote-telemetry-required? telemetry-events
@@ -59,6 +60,7 @@
               capability-audit! (fn [_] nil)
               approval-audit! (fn [_] nil)
               request-bounds-audit! (fn [_] nil)
+              classification-audit! (fn [_] nil)
               hardware-signing-audit! (fn [_] nil)}}]
   (fn [method params]
     (let [decision
@@ -73,9 +75,41 @@
                               :capabilities #{(keyword "kotobase" (name method))}}
                              (:action abac-attributes))))
            abac-policy)
+          ;; No-write-down. Egress is a WRITE question: what may leave, given
+          ;; what went in. Reads are the other half of the lattice and get
+          ;; `classification-decision` below (ADR-2607280100 Step 3).
           flow-decision (when (and (write-methods method)
                                    information-flow-context)
                           (flow/evaluate-egress information-flow-context))
+          ;; No-read-up, for EVERY method rather than the write ones.
+          ;;
+          ;; The comparison stays in `abac/evaluate`, which already emits a
+          ;; `:classification` violation when a declared clearance is below a
+          ;; declared classification -- duplicating it here would be the third
+          ;; copy of a judgment ADR-2607280100 D6 put in one place.
+          ;;
+          ;; What abac cannot do is notice that it was never GIVEN the labels:
+          ;; `required-rank` is nil for an undeclared resource, and nil raises
+          ;; no violation. So an unclassified resource reads as allowed for
+          ;; exactly the same reason a properly cleared one does. This records
+          ;; which of the two happened, so `skipped` and `passed` stop being
+          ;; the same value, and `classification-required?` turns the first
+          ;; into a denial.
+          resource-classification (get-in abac-attributes [:resource :classification])
+          subject-clearance (get-in abac-attributes [:subject :clearance])
+          classification-decision
+          {:classification/action (if (write-methods method)
+                                    :kotobase/write :kotobase/read)
+           :classification/resource resource-classification
+           :classification/subject subject-clearance
+           :classification/declared?
+           (and (some? resource-classification) (some? subject-clearance))
+           ;; Ranked, not merely present: a label this lattice cannot rank is
+           ;; not a label. abac would silently skip it the same way.
+           :classification/allowed?
+           (and (contains? abac/classification-rank resource-classification)
+                (contains? abac/classification-rank subject-clearance))
+           :classification/evaluated-by :kotoba.security.abac/evaluate}
           encoded-request (when (ifn? request-encode-fn)
                             (request-encode-fn [method params]))
           request-digest (when (and encoded-request request-digest-fn)
@@ -120,6 +154,7 @@
       (when approval-decision (approval-audit! approval-decision))
       (when request-bounds-decision
         (request-bounds-audit! request-bounds-decision))
+      (classification-audit! classification-decision)
       (when hardware-signing-decision
         (hardware-signing-audit! hardware-signing-decision))
       (cond
@@ -147,6 +182,13 @@
         (throw (ex-info "request bounds deny kotobase XRPC"
                         {:type :kotobase/request-bounds-denied :method method
                          :request-bounds request-bounds-decision}))
+
+        (and classification-required?
+             (not (:classification/allowed? classification-decision)))
+        (throw (ex-info "classification is not declared for this operation"
+                        {:type :kotobase/classification-undeclared
+                         :method method
+                         :classification classification-decision}))
 
         (not (:abac/allowed? decision))
         (throw (ex-info "ABAC policy denies kotobase operation"
