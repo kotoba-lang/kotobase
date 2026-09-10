@@ -1,0 +1,321 @@
+#!/usr/bin/env nbb
+;; scripts/measure-disclosure-grant.cljs — does recipient-bound key delivery
+;; actually refuse, and for the reason it names.
+;;
+;; root 90-docs/security/privacy-threat-matrix.datoms.edn recorded the `key`
+;; plane cell as :unmeasured-here: the module existed and its docstring made
+;; the right non-claim, but nothing in that file had been RUN. This runs it.
+;;
+;; Every probe asserts a REASON LITERAL, never "it threw". A negative test
+;; that only asserts that something was thrown counts a throw from any other
+;; cause as a success, and this module has 21 distinct refusal literals that
+;; a caller could confuse for one another.
+;;
+;; Four questions, and where each is answered below:
+;;
+;;   B  does an expired authority window refuse, with which literal, and does
+;;      the boundary sit where the source says (now == expires-at refuses,
+;;      one nanosecond earlier releases, now == not-before releases)
+;;   C  does a key-epoch change invalidate a prior grant, and under which
+;;      literal -- note :authority-epoch-revoked is NOT it (see C8)
+;;   D  is a delivery to the wrong recipient refused for the reason it names
+;;   E  is there any path where a missing or non-callable port is treated as
+;;      permission rather than refusal -- 36 port shapes, 0 releases
+;;
+;; Exit 0 = every probe answered what it predicted. Exit 1 = at least one did
+;; not, and the COUNT block names which. Counts, not a boolean: a boolean
+;; cannot separate one regression from a broken build.
+;;
+;; Run (from the repo root; the classpath must span the workspace checkouts):
+;;   nbb --classpath "src:<workspace src dirs>" scripts/measure-disclosure-grant.cljs
+;;
+;; ⚠ Measured 2026-09-10: 20 kotoba-lang repos renamed src/*.cljc to *.kotoba
+;; that day (pure R100 renames, no content change), so `kotoba.lang.text` --
+;; which multiformats.core requires, so which this module transitively needs --
+;; has no extension nbb can load in the west-pinned checkout. Repos whose
+;; nbb.edn pins io.github.kotoba-lang/text at 73bdb13 are unaffected; a
+;; classpath built from orgs/kotoba-lang/text/src is. If this file cannot
+;; load, that is the reason, and it is not a fact about this module.
+
+(ns measure-disclosure-grant
+  "Measurement of the `key` plane cell of 90-docs/security/privacy-threat-matrix.
+   Runs kotobase.disclosure-grant/release! and delivery-verification and records
+   the REASON LITERAL of every refusal. Prints one line per probe and a count
+   block. Exit 0 = every probe answered what it predicted; 1 = a mismatch;
+   2 = could not run."
+  (:require [kotobase.disclosure-grant :as d]
+            [kotobase.execution-identity :as id]))
+
+(def policy {:kotoba.security/crypto-policy-version 1
+             :mode :hybrid-required :hybrid-epoch-floor 1})
+
+(def base-context
+  {:tenant "t" :owner "owner" :principal "alice"
+   :recipient-key "alice-encryption-key" :executor "executor"
+   :resource (d/ciphertext-cid [1 2 3]) :policy (id/value-cid :policy)
+   :audience "key-service" :epoch 2 :now "2026-09-06T12:00:00Z"})
+
+(defn sign [kind principal record]
+  (assoc record :signature
+         {:key/id principal :key/algorithm :fixture
+          :signature/value (str principal ":" (d/signing-cid kind record))}))
+
+(defn verify [{:keys [principal signature payload-cid]}]
+  (and (= principal (:key/id signature))
+       (= :fixture (:key/algorithm signature))
+       (= (:signature/value signature) (str principal ":" payload-cid))))
+
+(defn grant-and-envelope [ctx overrides env-epoch]
+  (let [g (merge {:disclosure/version 1 :tenant (:tenant ctx) :owner (:owner ctx)
+                  :issuer (:owner ctx) :recipient "alice"
+                  :recipient-key "alice-encryption-key"
+                  :resource (:resource ctx) :policy (:policy ctx)
+                  :operations #{:decrypt} :delegation-depth 2 :parent nil
+                  :not-before "2026-09-06T11:00:00Z"
+                  :expires-at "2026-09-06T13:00:00Z" :epoch (:epoch ctx)}
+                 overrides)
+        envelope {:envelope/provider {:provider/id :fixture :provider/fips-validated false}
+                  :envelope/algorithms [:x25519 :ml-kem-768 :aes-256-gcm]
+                  :envelope/kem? true :envelope/hybrid? true
+                  :envelope/epoch (or env-epoch (:epoch ctx))
+                  :envelope/binding (d/binding g) :sealed/ciphertext [10 20 30]}]
+    {:grant (sign :disclosure-grant (:issuer g)
+                  (assoc g :key-envelope-cid (id/value-cid envelope)))
+     :envelope envelope}))
+
+(defn request-for [g ctx overrides]
+  (sign :disclosure-request (:principal (merge ctx overrides))
+        (merge (select-keys ctx [:tenant :principal :recipient-key :resource :audience :epoch])
+               {:disclosure/version 1 :grant (id/value-cid g)
+                :nonce (str "n-" (rand-int 1000000000))
+                :expires-at "2026-09-06T12:30:00Z"}
+               overrides)))
+
+(defn options
+  ([] (options {}))
+  ([{:keys [ctx grant-over request-over opt-over env-epoch]}]
+   (let [ctx (merge base-context ctx)
+         {:keys [grant envelope]} (grant-and-envelope ctx (or grant-over {}) env-epoch)
+         spent (atom #{}) journal (atom {}) writes (atom 0)]
+     (merge
+      {:chain [grant]
+       :request (request-for grant ctx (or request-over {}))
+       :context ctx
+       :crypto-policy policy
+       :key-envelope envelope
+       :verify! verify
+       :authorize! (constantly true)
+       :consume-nonce! (fn [nonce]
+                         (let [old @spent]
+                           (and (not (contains? old nonce))
+                                (compare-and-set! spent old (conj old nonce)))))
+       :sign! (fn [{:keys [unsigned]}]
+                (:signature (sign :disclosure-delivery "executor" unsigned)))
+       :commit! (fn [r] (swap! writes inc)
+                  (let [cid (id/value-cid r)]
+                    (swap! journal assoc cid r)
+                    {:receipt/durable? true :receipt/cid cid}))
+       :read! (fn [cid] (get @journal cid))
+       ::writes writes}
+      (or opt-over {})))))
+
+(defn outcome
+  "Run release! and answer either :RELEASED or the reason literal, never a bare
+   throw: a probe that asserts only `it threw` counts any other cause as success."
+  [o]
+  (try (let [r (d/release! (dissoc o ::writes))]
+         (if (= (:key-envelope o) (:key-envelope r)) :RELEASED :RELEASED-DIFFERENT-ENVELOPE))
+       (catch :default e
+         (let [data (ex-data e)]
+           (or (:kotobase.disclosure-grant/reason data)
+               (:kotobase.authority-window/reason data)
+               (:kotobase.execution-keys/reason data)
+               (keyword (str "UNCLASSIFIED/" (.-message e))))))))
+
+(def results (atom []))
+(defn probe! [id expected f]
+  (let [got (try (f) (catch :default e (keyword (str "HARNESS-THREW/" (.-message e)))))
+        ok (= expected got)]
+    (swap! results conj {:id id :expected expected :got got :ok ok})
+    (println (str "RESULT\t" id "\t" expected "\t" got "\t" (if ok "ok" "MISMATCH")))
+    got))
+
+;; --------------------------------------------------------------- A baseline
+(println "\nA. baseline")
+(probe! :A1-valid-release :RELEASED #(outcome (options)))
+(probe! :A2-replay-same-nonce :nonce-replayed
+        #(let [o (options)] (d/release! (dissoc o ::writes)) (outcome o)))
+
+;; ------------------------------------------------- B authority window expiry
+;; request expires 12:30:00Z, grant window 11:00:00Z .. 13:00:00Z
+(println "\nB. authority window (expiry / not-before), with exact boundaries")
+(probe! :B1-well-inside :RELEASED
+        #(outcome (options {:ctx {:now "2026-09-06T12:00:00Z"}})))
+(probe! :B2-now-EQ-request-expiry :request-expired
+        #(outcome (options {:ctx {:now "2026-09-06T12:30:00Z"}})))
+(probe! :B3-one-ns-before-request-expiry :RELEASED
+        #(outcome (options {:ctx {:now "2026-09-06T12:29:59.999999999Z"}})))
+(probe! :B4-one-ns-after-request-expiry :request-expired
+        #(outcome (options {:ctx {:now "2026-09-06T12:30:00.000000001Z"}})))
+(probe! :B5-now-EQ-grant-expiry :request-expired
+        #(outcome (options {:ctx {:now "2026-09-06T13:00:00Z"}})))
+(probe! :B6-one-ns-before-grant-expiry-but-past-request :request-expired
+        #(outcome (options {:ctx {:now "2026-09-06T12:59:59.999999999Z"}})))
+(probe! :B7-now-EQ-grant-not-before :RELEASED
+        #(outcome (options {:ctx {:now "2026-09-06T11:00:00Z"}
+                            :request-over {:expires-at "2026-09-06T13:00:00Z"}})))
+(probe! :B8-one-ns-before-not-before :not-yet-valid
+        #(outcome (options {:ctx {:now "2026-09-06T10:59:59.999999999Z"}
+                            :request-over {:expires-at "2026-09-06T13:00:00Z"}})))
+;; the sub-second sort trap the namespace docstring names
+(probe! :B9-subsecond-expiry-naive-compare-would-expire :RELEASED
+        #(outcome (options {:ctx {:now "2026-09-06T12:00:00Z"}
+                            :request-over {:expires-at "2026-09-06T12:00:00.5Z"}})))
+(probe! :B10-unorderable-instant :invalid-expiry
+        #(outcome (options {:request-over {:expires-at "2026-09-06 12:30:00+00:00"}})))
+(probe! :B11-unorderable-now :invalid-context
+        #(outcome (options {:ctx {:now "not-an-instant"}})))
+;; a GRANT whose own window closed, while the request is still inside its own:
+;; the literal the caller sees still says "request"
+(probe! :B13-grant-window-closed-request-fresh :request-expired
+        #(outcome (options {:ctx {:now "2026-09-06T12:00:00Z"}
+                            :grant-over {:expires-at "2026-09-06T11:30:00Z"}})))
+(probe! :B14-grant-not-yet-open-request-fresh :not-yet-valid
+        #(outcome (options {:ctx {:now "2026-09-06T12:00:00Z"}
+                            :grant-over {:not-before "2026-09-06T12:30:00Z"}})))
+(probe! :B12-grant-not-before-unorderable :invalid-time
+        #(outcome (options {:grant-over {:not-before "2026/09/06"}})))
+
+;; ---------------------------------------------------------------- C epochs
+(println "\nC. key epoch")
+(probe! :C1-epoch-EQ-released :RELEASED #(outcome (options {:ctx {:epoch 2}})))
+(probe! :C2-context-epoch-advanced-grant-stale :scope-mismatch
+        #(outcome (options {:ctx {:epoch 3} :grant-over {:epoch 2}})))
+(probe! :C3-grant-ahead-of-context :scope-mismatch
+        #(outcome (options {:ctx {:epoch 2} :grant-over {:epoch 3}})))
+(probe! :C4-request-epoch-stale :request-mismatch
+        #(outcome (options {:ctx {:epoch 3} :grant-over {:epoch 3}
+                            :request-over {:epoch 2}})))
+(probe! :C5-envelope-epoch-stale :envelope-epoch-mismatch
+        #(outcome (options {:ctx {:epoch 3} :grant-over {:epoch 3} :env-epoch 2
+                            :request-over {:epoch 3}})))
+(probe! :C5b-envelope-epoch-ahead :envelope-epoch-mismatch
+        #(outcome (options {:ctx {:epoch 2} :grant-over {:epoch 2} :env-epoch 3
+                            :request-over {:epoch 2}})))
+;; crypto-policy :hybrid-epoch-floor is 1: exactly at the floor and one below it
+(probe! :C6a-epoch-EQ-hybrid-floor :RELEASED
+        #(outcome (options {:ctx {:epoch 1} :grant-over {:epoch 1}
+                            :request-over {:epoch 1}})))
+(probe! :C6b-epoch-one-below-hybrid-floor :crypto-policy
+        #(outcome (options {:ctx {:epoch 0} :grant-over {:epoch 0}
+                            :request-over {:epoch 0}})))
+(probe! :C7-negative-epoch-context :invalid-context
+        #(outcome (options {:ctx {:epoch -1} :grant-over {:epoch -1}
+                            :request-over {:epoch -1}})))
+;; is :authority-epoch-revoked reachable from this entry at all?
+(probe! :C8-authority-epoch-revoked-reachable? :scope-mismatch
+        #(outcome (options {:ctx {:epoch 5} :grant-over {:epoch 4}
+                            :request-over {:epoch 4}})))
+
+;; ------------------------------------------------------------ D recipient
+(println "\nD. recipient binding")
+(probe! :D1-leaf-recipient-is-someone-else :recipient-or-grant-mismatch
+        #(outcome (options {:grant-over {:recipient "mallory"}})))
+(probe! :D2-request-principal-is-someone-else :request-mismatch
+        #(outcome (options {:request-over {:principal "mallory"}})))
+(probe! :D3-context-and-request-agree-leaf-does-not :recipient-or-grant-mismatch
+        #(outcome (options {:ctx {:principal "mallory"}
+                            :request-over {:principal "mallory"}})))
+;; :recipient-key is NOT in check-grant!'s scope list; it is caught later
+(probe! :D4-recipient-key-swapped-on-grant :recipient-or-grant-mismatch
+        #(outcome (options {:grant-over {:recipient-key "mallory-key"}})))
+(probe! :D5-recipient-key-swapped-on-request :request-mismatch
+        #(outcome (options {:request-over {:recipient-key "mallory-key"}})))
+(probe! :D6-grant-lacks-decrypt :recipient-or-grant-mismatch
+        #(outcome (options {:grant-over {:operations #{:propose-update}}})))
+(probe! :D7-request-cites-a-different-grant :recipient-or-grant-mismatch
+        #(outcome (options {:request-over {:grant (id/value-cid :other)}})))
+(probe! :D8-tenant-swapped :scope-mismatch
+        #(outcome (options {:grant-over {:tenant "other-tenant"}})))
+
+;; ---------------------------------------------------------------- E ports
+(println "\nE. ports: is an absent or non-callable port ever permission?")
+(def port-names [:verify! :authorize! :consume-nonce! :sign! :commit! :read!])
+(doseq [p port-names]
+  (probe! (keyword (str "E1-nil-" (name p))) :missing-port
+          #(outcome (options {:opt-over {p nil}})))
+  (probe! (keyword (str "E2-int-" (name p))) :missing-port
+          #(outcome (options {:opt-over {p 42}})))
+  ;; a map is ifn? but not fn? -- authority-window checks ifn?, release-with! fn?
+  (probe! (keyword (str "E3-map-" (name p))) :missing-port
+          #(outcome (options {:opt-over {p {}}})))
+  ;; a keyword is ifn? but not fn?
+  (probe! (keyword (str "E4-keyword-" (name p))) :missing-port
+          #(outcome (options {:opt-over {p :yes}})))
+  ;; key PRESENT but holding a non-callable keyword -> port check, not shape check
+  (probe! (keyword (str "E5-sentinel-" (name p))) :missing-port
+          #(outcome (options {:opt-over {p ::omit}}))))
+;; omission proper (dissoc, not a sentinel)
+(doseq [p port-names]
+  (probe! (keyword (str "E6-dissoc-" (name p))) :invalid-shape
+          #(let [o (dissoc (options) p)] (outcome o))))
+(println "\nE7. a port that answers something other than literal true")
+(doseq [[p reason] [[:verify! :signature-rejected]
+                    [:authorize! :authority-denied]
+                    [:consume-nonce! :nonce-replayed]]]
+  (doseq [[label v] [[:nil nil] [:false false] [:truthy-keyword :yes]
+                     [:truthy-one 1] [:string-true "true"]]]
+    (probe! (keyword (str "E7-" (name p) "-" (name label))) reason
+            #(outcome (options {:opt-over {p (constantly v)}})))))
+(probe! :E8-commit-durable-is-string :receipt-not-durable
+        #(outcome (options {:opt-over {:commit! (fn [r] {:receipt/durable? "true"
+                                                         :receipt/cid (id/value-cid r)})}})))
+(probe! :E9-read-returns-something-else :receipt-readback-mismatch
+        #(outcome (options {:opt-over {:read! (constantly {:not "the receipt"})}})))
+(probe! :E10-async-port-in-sync-api :async-port-in-sync-api
+        #(outcome (options {:opt-over {:authorize! (fn [_] (js/Promise.resolve true))}})))
+(probe! :E11-commit-never-called-when-refused-early :ZERO-WRITES
+        #(let [o (options {:ctx {:now "2026-09-06T13:00:00Z"}})]
+           (outcome o)
+           (if (zero? @(::writes o)) :ZERO-WRITES :WROTE)))
+
+;; ------------------------------------------- F delivery-verification (remote)
+(println "\nF. delivery-verification (the recipient side)")
+(defn dv-outcome [ctx req delivery]
+  (try (let [c (d/delivery-verification ctx req delivery policy)]
+         (if (true? (verify c)) :VERIFIES :SIGNATURE-CHECK-FALSE))
+       (catch :default e
+         (let [data (ex-data e)]
+           (or (:kotobase.disclosure-grant/reason data)
+               (:kotobase.authority-window/reason data)
+               (keyword (str "UNCLASSIFIED/" (.-message e))))))))
+(def good (let [o (options)] {:o o :delivery (d/release! (dissoc o ::writes))}))
+(probe! :F1-honest-delivery :VERIFIES
+        #(dv-outcome (:context (:o good)) (:request (:o good)) (:delivery good)))
+(probe! :F2-replayed-delivery-still-verifies :VERIFIES
+        #(dv-outcome (:context (:o good)) (:request (:o good)) (:delivery good)))
+(probe! :F3-delivery-past-request-expiry :request-expired
+        #(dv-outcome (assoc (:context (:o good)) :now "2026-09-06T12:30:00Z")
+                     (:request (:o good)) (:delivery good)))
+(probe! :F4-delivery-at-advanced-epoch :scope-mismatch
+        #(dv-outcome (assoc (:context (:o good)) :epoch 3)
+                     (:request (:o good)) (:delivery good)))
+(probe! :F5-delivery-to-wrong-recipient :delivery-mismatch
+        #(dv-outcome (assoc (:context (:o good)) :principal "mallory")
+                     (:request (:o good)) (:delivery good)))
+
+;; ------------------------------------------------------------------ report
+(let [rs @results
+      n (count rs)
+      okc (count (filter :ok rs))
+      bad (remove :ok rs)]
+  (println "\n================ COUNTS ================")
+  (println "probes run          :" n)
+  (println "matched prediction  :" okc)
+  (println "mismatched          :" (count bad))
+  (doseq [b bad] (println "  MISMATCH" (:id b) ":: expected" (:expected b) ":: got" (:got b)))
+  (println "distinct reason literals observed:")
+  (doseq [r (sort-by str (distinct (map :got rs)))] (println "   " r))
+  (println "release-count (probes that RELEASED):"
+           (count (filter #(= :RELEASED (:got %)) rs)))
+  (js/process.exit (if (seq bad) 1 0)))
