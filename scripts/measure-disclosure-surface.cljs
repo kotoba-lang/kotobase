@@ -1,0 +1,163 @@
+#!/usr/bin/env nbb
+;; scripts/measure-disclosure-surface.cljs — what the public side of an
+;; execution can carry, and what it cannot.
+;;
+;; root ADR-2609108000 invariant 3: Auditability != Publicity. An immutable
+;; audit trail is evidence; access history is itself personal data. That
+;; invariant is a claim about a boundary, so this measures the boundary.
+;;
+;; It measures four things and refuses to report if its own control fails:
+;;
+;;   C  the contract actually refuses, and for the reason it names
+;;   A  the census -- which identifying fields can reach a receipt at all
+;;   B  unlinkability -- the request nonce reaches every downstream identifier
+;;   D  the residue -- what stays correlatable after B
+;;   E  runtime reach -- which of these namespaces the deployed runtime has
+;;      no source for at all
+;;
+;; Returns a COUNT of failures. A boolean cannot separate one regression from
+;; a broken build.
+;;
+;; Run (from the repo root):
+;;   nbb --classpath "src:<workspace src dirs>" scripts/measure-disclosure-surface.cljs
+
+(ns measure-disclosure-surface
+  (:require [clojure.set :as set]
+            [clojure.string :as str]
+            ["fs" :as fs]
+            [kotobase.execution-contract :as ec]
+            [kotobase.execution-identity :as id]))
+
+(def ^:private failures (atom 0))
+
+(defn- check! [label ok? detail]
+  (when-not ok? (swap! failures inc))
+  (println (if ok? "  ok  " "  FAIL") label "—" detail))
+
+(defn- rejected
+  "Run f and return the contract's own reason keyword, or nil if it allowed."
+  [f]
+  (try (f) nil
+       (catch :default e
+         (let [d (ex-data e)]
+           [(:kotobase.execution-contract/reason d)
+            (select-keys d [:unexpected :missing :record/type])]))))
+
+;; --------------------------------------------------------------- fixtures
+
+(def ^:private manifest
+  {:execution/version 1 :data/commit "commit-1" :authority/policy "policy-1"
+   :authority/epoch 1 :location/manifest "loc-1" :schema/root "schema-1"
+   :parent nil :issued-at 1000 :signature "sig-m"})
+
+(defn- request [principal nonce]
+  {:request/version 1 :principal principal :tenant "t1" :graph "g1"
+   :operation :read :query/digest "qd-1" :base/commit "commit-1"
+   :authority/policy "policy-1" :authority/epoch 1
+   :nonce nonce :expires-at 2000})
+
+(defn- receipt [request-digest result-root]
+  {:receipt/version 1 :request/digest request-digest
+   :execution/manifest "manifest-cid-1" :query/plan-digest "plan-1"
+   :authority/decision :allow :result/root result-root
+   :cost {:dependent-hops 1 :requests 2 :bytes 3 :cache-profile :cold}
+   :implementation/build "build-1" :signature "sig-r"})
+
+(defn -main []
+
+  (println "\n=== C. control — the contract refuses, for the reason it names ===")
+  (println "  A negative test that only asserts 'it threw' counts a throw for")
+  (println "  any other cause as a success. These pin the reason literal.")
+  (let [ok (receipt "rd-1" "root-1")]
+    (check! "a valid receipt is admitted" (nil? (rejected #(ec/validate-receipt! ok)))
+            "baseline — without this the refusals below prove nothing")
+    (let [[reason data] (rejected #(ec/validate-receipt! (assoc ok :principal "alice")))]
+      (check! "a receipt carrying :principal is refused as :invalid-keys"
+              (and (= :invalid-keys reason) (= #{:principal} (:unexpected data)))
+              (str reason " " (pr-str (:unexpected data)))))
+    (let [[reason _] (rejected #(ec/validate-receipt! (assoc ok :query/text "SELECT …")))]
+      ;; :query/text is BOTH unexpected and forbidden; exact-keys! runs first.
+      (check! "a receipt carrying the query text is refused"
+              (some? reason) (str reason " — exact-keys! is checked before the forbidden set")))
+    (let [[reason _] (rejected
+                      #(ec/validate-receipt!
+                        (assoc-in ok [:cost :cache-profile] {:credential "hunter2"})))]
+      (check! "a credential smuggled into a nested value is refused as :forbidden-field"
+              (= :forbidden-field reason) (str reason " — the forbidden set walks nested values"))))
+
+  (when (pos? @failures)
+    (println "\nREFUSING to report the boundary: the control did not hold.")
+    (js/process.exit 2))
+
+  (println "\n=== A. census — what a receipt can carry at all ===")
+  (let [identifying #{:principal :tenant :purpose :query/text :query/ast
+                      :credential :token :authorization}
+        leaked (set/intersection ec/receipt-keys identifying)]
+    (check! "no identifying field is a receipt field" (empty? leaked)
+            (str "receipt-keys ∩ identifying = " (pr-str leaked)
+                 " over " (count ec/receipt-keys) " receipt fields"))
+    (check! ":principal exists, and only in the request envelope"
+            (and (contains? ec/request-keys :principal)
+                 (not (contains? ec/receipt-keys :principal)))
+            "the receipt cites :request/digest, not the envelope")
+    (check! "the field sets are exact, not minimums"
+            (= 9 (count ec/receipt-keys))
+            (str (count ec/receipt-keys) " fields — exact-keys! rejects any extra")))
+
+  (println "\n=== B. unlinkability — the nonce reaches every downstream id ===")
+  (println "  Two executions by the SAME principal for the SAME query, differing")
+  (println "  only in the envelope nonce. If any public identifier repeats, a")
+  (println "  reader of the log learns the two runs are the same run.")
+  (let [d1 (id/value-cid (request "did:alice" "nonce-1"))
+        d2 (id/value-cid (request "did:alice" "nonce-2"))
+        r1 (id/value-cid (receipt d1 "root-1"))
+        r2 (id/value-cid (receipt d2 "root-1"))]
+    (check! "request digests differ" (not= d1 d2) (str (subs d1 0 16) "… vs " (subs d2 0 16) "…"))
+    (check! "receipt identities differ" (not= r1 r2)
+            "so the transparency leaf, which carries only these CIDs, does not repeat")
+    (check! "the digest is deterministic for an identical envelope"
+            (= d1 (id/value-cid (request "did:alice" "nonce-1")))
+            "content addressing — equal values, equal address, across processes"))
+
+  (println "\n=== D. residue — what stays correlatable ===")
+  (println "  :result/root is a content address of the ANSWER, so it is equal")
+  (println "  exactly when the answers are equal. That is the property it is")
+  (println "  for, and it is also an equality oracle for whoever reads receipts.")
+  (let [alice (receipt (id/value-cid (request "did:alice" "n1")) "root-same")
+        bob   (receipt (id/value-cid (request "did:bob"   "n2")) "root-same")
+        later (receipt (id/value-cid (request "did:alice" "n3")) "root-changed")]
+    (check! "two principals asking the same question share :result/root"
+            (= (:result/root alice) (:result/root bob))
+            "different principals, different nonces, same answer identity")
+    (check! "a changed answer changes it"
+            (not= (:result/root alice) (:result/root later))
+            "so 'the answer changed' is observable without reading the answer")
+    (println "  note  this is a RESIDUE, not a defect: it is what makes a receipt")
+    (println "        auditable. Naming it is the point — a commitment with a")
+    (println "        per-reader blind would remove it, and would also remove")
+    (println "        the cross-reader agreement the receipt exists to provide."))
+
+  (println "\n=== E. runtime reach — namespaces the deployed runtime cannot load ===")
+  (println "  CLAUDE.md ranks JVM last among runtimes. A boundary enforced only")
+  (println "  in a .clj namespace is enforced where this service does not run.")
+  (let [files (vec (.readdirSync fs "src/kotobase"))
+        clj   (filterv #(str/ends-with? % ".clj") files)
+        portable (into #{} (comp (filter #(or (str/ends-with? % ".cljc")
+                                              (str/ends-with? % ".cljs")))
+                                 (map #(first (str/split % #"\."))))
+                       files)
+        jvm-only (filterv #(not (contains? portable (first (str/split % #"\.")))) clj)]
+    (check! "the execution contract itself is portable"
+            (contains? portable "execution_contract")
+            "execution_contract.cljc — the boundary measured in A and C runs everywhere")
+    (println "  measured" (count jvm-only) "JVM-only namespace(s) of" (count files) "files:")
+    (doseq [f (sort jvm-only)] (println "        " f))
+    (check! "the transparency log is among them, and that is a fact to record"
+            (some #{"transparency_log.clj"} jvm-only)
+            "the public audit plane is not on the runtime the service deploys to"))
+
+  (println "\n---")
+  (println "FAILURES=" @failures)
+  (js/process.exit (if (pos? @failures) 1 0)))
+
+(-main)
