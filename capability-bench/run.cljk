@@ -1,7 +1,7 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Capability benchmark runner.
 ;;
-;;   nbb --classpath "$(nbb setup.cljs --print-classpath)" run.cljs [opts]
+;;   kbb --backend sci --classpath "$(kbb --backend sci setup.cljk --print-classpath)" run.cljs [opts]
 ;;
 ;; Options (all optional):
 ;;   --entities N     entities in the workload           (default 4000)

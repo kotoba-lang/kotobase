@@ -1,7 +1,7 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Semantic Merkle Lisp Database benchmark.
 ;;
-;;   nbb --classpath "$(nbb setup.cljs --print-classpath)" run-semantic.cljs [opts]
+;;   kbb --backend sci --classpath "$(kbb --backend sci setup.cljk --print-classpath)" run-semantic.cljs [opts]
 ;;
 ;;   --definitions N   corpus size                    (default 3000)
 ;;   --nodes N         target nodes per definition    (default 40)

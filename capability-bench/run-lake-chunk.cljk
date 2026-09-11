@@ -1,8 +1,8 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Lake chunk sizing sweep: what does rows-per-chunk actually buy on an
 ;; object-store profile, and where does the padding ladder cut it off?
 ;;
-;;   nbb --classpath "$(nbb setup.cljs --print-classpath)" run-lake-chunk.cljs [opts]
+;;   kbb --backend sci --classpath "$(kbb --backend sci setup.cljk --print-classpath)" run-lake-chunk.cljs [opts]
 ;;
 ;;   --entities N   datom workload size  (default 4000)
 ;;   --out FILE     result EDN           (default results/lake-chunk.edn)

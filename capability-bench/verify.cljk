@@ -1,7 +1,7 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Cross-backend agreement check.
 ;;
-;;   nbb --classpath "$(nbb setup.cljs --print-classpath)" verify.cljs
+;;   kbb --backend sci --classpath "$(kbb --backend sci setup.cljk --print-classpath)" verify.cljs
 ;;
 ;; A performance comparison between backends is worthless if they do not
 ;; return the same answers, so this runs the same small workload through all

@@ -56,7 +56,7 @@ ActorDB or Holochain conductor throughput figure.
 ```bash
 npm install
 npm run setup                      # clone the pinned kotoba-lang libraries into .deps/
-nbb --classpath "$(nbb setup.cljs --print-classpath)" run.cljs \
+kbb --backend sci --classpath "$(kbb --backend sci setup.cljk --print-classpath)" run.cljs \
     --entities 4000 --updates 200 --shards 8 --fvm
 ```
 

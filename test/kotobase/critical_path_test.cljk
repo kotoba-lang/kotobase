@@ -12,7 +12,7 @@
   (`clojure.java.io`, `file-seq`, `slurp`) to make a claim about the
   repository, which is a build-time question with no ClojureScript meaning.
   As `.cljc` it linted for both platforms, where `file-seq` and `slurp` do not
-  exist -- so `clojure -M:lint` failed and took CI red from 2026-07-30, while
+  exist -- so `kbb -M:lint` failed and took CI red from 2026-07-30, while
   the 80 tests underneath it kept passing. The extension was the bug."
   (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is]]))

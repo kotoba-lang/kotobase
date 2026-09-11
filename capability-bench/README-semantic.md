@@ -9,7 +9,7 @@ Run it:
 
 ```bash
 npm install && npm run setup
-nbb --classpath "$(nbb setup.cljs --print-classpath)" run-semantic.cljs \
+kbb --backend sci --classpath "$(kbb --backend sci setup.cljk --print-classpath)" run-semantic.cljs \
     --definitions 2000 --eval-slice 200 --shape-definitions 150
 ```
 

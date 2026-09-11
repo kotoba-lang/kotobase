@@ -1,7 +1,7 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Client-side index descent: hops MEASURED, not declared.
 ;;
-;;   nbb --classpath "$(nbb setup.cljs --print-classpath)" run-descent.cljs [opts]
+;;   kbb --backend sci --classpath "$(kbb --backend sci setup.cljk --print-classpath)" run-descent.cljs [opts]
 ;;
 ;;   --entities N    datom workload size   (default 4000)
 ;;   --reads N       point reads per run   (default 50)

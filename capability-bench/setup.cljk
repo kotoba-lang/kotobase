@@ -1,9 +1,9 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Fetch the pinned workspace libraries this benchmark is built on and print
 ;; the nbb classpath for them.
 ;;
-;;   nbb setup.cljs                    # clone/verify into .deps/
-;;   nbb setup.cljs --print-classpath  # just print the classpath
+;;   kbb --backend sci setup.cljk                    # clone/verify into .deps/
+;;   kbb --backend sci setup.cljk --print-classpath  # just print the classpath
 ;;
 ;; These are real kotoba-lang libraries, not vendored copies: the Prolly Tree,
 ;; the IPLD/dag-cbor codec, the multiformats CID assembly, and the CRDT

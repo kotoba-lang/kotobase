@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; scripts/measure-disclosure-grant.cljk — does recipient-bound key delivery
 ;; actually refuse, and for the reason it names.
 ;;
@@ -27,7 +27,7 @@
 ;; cannot separate one regression from a broken build.
 ;;
 ;; Run (from the repo root; the classpath must span the workspace checkouts):
-;;   nbb --classpath "src:<workspace src dirs>" scripts/measure-disclosure-grant.cljk
+;;   kbb --backend sci --classpath "src:<workspace src dirs>" scripts/measure-disclosure-grant.cljk
 ;;
 ;; ⚠ Measured 2026-09-10: 20 kotoba-lang repos renamed src/*.cljc to *.kotoba
 ;; that day (pure R100 renames, no content change), so `kotoba.lang.text` --
