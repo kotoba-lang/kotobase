@@ -1,6 +1,6 @@
 # The public side of an execution — measured, 2026-09-10
 
-Harness: `scripts/measure-disclosure-surface.cljs`. Run it from the repo root
+Harness: `scripts/measure-disclosure-surface.cljk`. Run it from the repo root
 with the workspace source dirs on the classpath. It returns a **count** of
 failures, and exits 2 — neither 0 nor 1 — when its own control does not hold.
 

@@ -13,4 +13,4 @@ audit state.
 
 The production policy is
 `qualification/transparency-policy.edn`; executable evidence is in
-`test/kotobase/transparency_log_test.clj`.
+`test/kotobase/transparency_log_test.cljk`.

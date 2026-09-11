@@ -19,7 +19,7 @@
   undefined (reading 'lastIndexOf')` inside a CID decode, with nothing wrong
   here. The entry is committed so the work is done when the pins are aligned.
 
-      npx nbb --classpath src:test run-tests.cljs"
+      npx nbb --classpath src:test run-tests.cljk"
   (:require [cljs.test :as t]
             [kotobase.authorized-query-test]
             [kotobase.classification-agreement-test]
