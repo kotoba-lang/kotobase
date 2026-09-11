@@ -2,7 +2,7 @@
 
 `kotobase` ships one compatibility surface: the `kotobase.store/IStore`
 protocol (`-put`/`-get`/`-list`/`-append`/`-read`) and the shared contract it
-must satisfy (`test/kotobase/contract.cljc`). There is no separate profile
+must satisfy (`test/kotobase/contract.cljk`). There is no separate profile
 version number the way `kotoba-lang/kotoba-lang` tracks `:kotoba.lang/
 profile-version` -- this repo's version is its package/library semver.
 
@@ -20,7 +20,7 @@ profile-version` -- this repo's version is its package/library semver.
   removing a method.
 - **The contract is the compatibility surface, not the backend.** A backend
   (`LocalStore`, `KotobaseStore`, or any future one) is conforming iff it
-  passes `test/kotobase/contract.cljc:verify` unchanged. Backend-internal
+  passes `test/kotobase/contract.cljk:verify` unchanged. Backend-internal
   representation (the shape of `LocalStore`'s atom, `KotobaseStore`'s XRPC
   wire format) may change freely without a compatibility bump as long as the
   contract still passes.

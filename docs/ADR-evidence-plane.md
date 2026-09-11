@@ -163,7 +163,7 @@ why the plane is now called `:causal-decision`.
   that writes the records defines the plane, and the lift rule is unchanged
   for it.
 
-  The vestigial copy is gone with them. `src/kotobase/code_graph.cljc` was
+  The vestigial copy is gone with them. `src/kotobase/code_graph.cljk` was
   byte-identical to `kotoba-lang/code-graph`'s `code_graph/core.cljc` — 668
   lines each, differing only in the `ns` form, the async halves likewise —
   left behind when the library was extracted (ADR-2607201600 M6). Nothing

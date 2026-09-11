@@ -1,5 +1,5 @@
 #!/usr/bin/env nbb
-;; scripts/measure-disclosure-surface.cljs — what the public side of an
+;; scripts/measure-disclosure-surface.cljk — what the public side of an
 ;; execution can carry, and what it cannot.
 ;;
 ;; root ADR-2609108000 invariant 3: Auditability != Publicity. An immutable
@@ -19,7 +19,7 @@
 ;; a broken build.
 ;;
 ;; Run (from the repo root):
-;;   nbb --classpath "src:<workspace src dirs>" scripts/measure-disclosure-surface.cljs
+;;   nbb --classpath "src:<workspace src dirs>" scripts/measure-disclosure-surface.cljk
 
 (ns measure-disclosure-surface
   (:require [clojure.set :as set]

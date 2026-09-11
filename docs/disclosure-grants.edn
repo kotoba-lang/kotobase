@@ -48,7 +48,7 @@
  :verification
  {:runtime "nbb 1.5.212 / Node 24.19.0; pinned repository dependencies"
   :kotobase {:tests 13 :assertions 59 :failures 0 :errors 0
-             :command "nbb --classpath <kotobase src:test plus pinned dependency src paths> scripts/test-disclosure.cljs"}
+             :command "nbb --classpath <kotobase src:test plus pinned dependency src paths> scripts/test-disclosure.cljk"}
   :coverage ["owner-to-recipient and narrowing delegation"
              "wrong parent/delegator, operation/time amplification, wrong recipient and epoch"
              "actual Ed25519 signatures and tampering"

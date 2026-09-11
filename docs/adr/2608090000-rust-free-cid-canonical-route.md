@@ -21,11 +21,11 @@ boundary, alongside B2, generic S3, IPFS, and client caches.
 ## Qualification boundary
 
 `kotoba/cid_graph_replay.kotoba` and
-`qualification/kotobase/cid_graph_replay_qualification_test.clj` execute the
+`qualification/kotobase/cid_graph_replay_qualification_test.cljk` execute the
 same fixed-schema frontier ordering and assert/retract semantics on actual
 Kotoba native and Wasm targets without a Rust toolchain.
 `kotoba/cid_signed_commit.kotoba` and
-`qualification/kotobase/cid_crypto_qualification_test.clj` extend that same
+`qualification/kotobase/cid_crypto_qualification_test.cljk` extend that same
 fixed vector through all public novelty transaction blocks, CID-linked queue
 nodes, `{state, prev, seq}` commits, the exact state-root and merge marker CIDs,
 canonical payload/envelope DAG-CBOR, SHA-256 CIDv1/base32, and Ed25519 signing.
