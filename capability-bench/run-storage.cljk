@@ -1,7 +1,7 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; S3-profile / encryption / identity-scheme / data-lake benchmark.
 ;;
-;;   nbb --classpath "$(nbb setup.cljs --print-classpath)" run-storage.cljs [opts]
+;;   kbb --backend sci --classpath "$(kbb --backend sci setup.cljk --print-classpath)" run-storage.cljs [opts]
 ;;
 ;;   --entities N    datom workload size        (default 4000)
 ;;   --txns N        steady-state transactions  (default 50)

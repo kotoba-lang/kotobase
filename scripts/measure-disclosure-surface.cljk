@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; scripts/measure-disclosure-surface.cljk — what the public side of an
 ;; execution can carry, and what it cannot.
 ;;
@@ -19,7 +19,7 @@
 ;; a broken build.
 ;;
 ;; Run (from the repo root):
-;;   nbb --classpath "src:<workspace src dirs>" scripts/measure-disclosure-surface.cljk
+;;   kbb --backend sci --classpath "src:<workspace src dirs>" scripts/measure-disclosure-surface.cljk
 
 (ns measure-disclosure-surface
   (:require [clojure.set :as set]

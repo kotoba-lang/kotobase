@@ -408,7 +408,7 @@ uses `kotoba.semantic-code`'s canonical DAG-CBOR definition, namespace,
 closure, and execution blocks with real CIDv1 verification. Run it with:
 
 ```bash
-clojure -M:integration
+kbb -M:integration
 ```
 
 CID possession is never authority. Package signatures/admission, CACAO,
@@ -452,8 +452,8 @@ license you to conclude.
 
 ```bash
 cd capability-bench && npm install && npm run setup
-nbb --classpath "$(nbb setup.cljs --print-classpath)" verify.cljs   # all four must agree
-nbb --classpath "$(nbb setup.cljs --print-classpath)" run.cljs --fvm
+kbb --backend sci --classpath "$(kbb --backend sci setup.cljk --print-classpath)" verify.cljs   # all four must agree
+kbb --backend sci --classpath "$(kbb --backend sci setup.cljk --print-classpath)" run.cljs --fvm
 ```
 
 The same module also measures the **semantic code graph** —
@@ -479,7 +479,7 @@ Workers) inject a `fetch`-based `xrpc` and serve the app API straight off the
 > `io.github.kotoba-lang/kotobase`; see `docs/coverage.edn`'s resolved M5 note.
 
 ```bash
-clojure -M:test     # LocalStore + KotobaseStore both satisfy the IStore contract
-clojure -M:cljs-test -m cljs.main -co '{:target :nodejs :output-to "target/p2-tests.js" :output-dir "target/p2-out" :optimizations :none :main kotobase.async-test-runner}' -c kotobase.async-test-runner
+kbb -M:test     # LocalStore + KotobaseStore both satisfy the IStore contract
+kbb -M:cljs-test -m cljs.main -co '{:target :nodejs :output-to "target/p2-tests.js" :output-dir "target/p2-out" :optimizations :none :main kotobase.async-test-runner}' -c kotobase.async-test-runner
 node target/p2-tests.js              # real Promise causal-commit/guarded path
 ```

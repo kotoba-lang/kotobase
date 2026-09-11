@@ -3,7 +3,7 @@
   "private": true,
   "description": "npm dependencies of the ClojureScript half (currently none; multiformats uses org-nist-sha2).",
   "scripts": {
-    "test:causal-worker": "clojure -M:cljs-test -m cljs.main -co '{:target :nodejs :output-to \"target/p2-tests.js\" :output-dir \"target/p2-out\" :optimizations :none :main kotobase.async-test-runner}' -c kotobase.async-test-runner && node target/p2-tests.js"
+    "test:causal-worker": "kbb -M:cljs-test -m cljs.main -co '{:target :nodejs :output-to \"target/p2-tests.js\" :output-dir \"target/p2-out\" :optimizations :none :main kotobase.async-test-runner}' -c kotobase.async-test-runner && node target/p2-tests.js"
   },
   "dependencies": {}
 }
