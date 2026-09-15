@@ -40,6 +40,51 @@ Neither previously cross-referenced the other two by name alone.
 
 ---
 
+## Data model — an incidence merkle graph
+
+kotobase does not treat IPLD as a generic tree/DAG encoding — every IPLD
+block is an **incidence structure**, in the sense of `com-junkawasaki/inc`'s
+Theory of Incidence: a relation `i` whose **boundary** `∂(i)` is a finite
+list of labelled, oriented **endpoints** (`Endpoint = {i, role, sign, mult}`,
+`Boundary = List Endpoint`). Content-addressing hashes that boundary into the
+node's own identity, so the incidence structure *is* the Merkle graph, not a
+separate encoding layered on top of one:
+
+- **endpoint = IPLD link.** Every `ipld/link` (the `ipld` repo's tag-42
+  CID link) occupies a labelled position in its parent block — a map key
+  (`"children"`, `"prev"`, `"index-roots/spo"`) or array index — and points
+  one direction, parent → child. That is exactly an `Endpoint`: `role` is
+  the label, `sign` is the orientation (always outbound in an IPLD DAG —
+  links never point back up), `mult` is how many times that role repeats
+  (a prolly-tree internal node holds many `children` endpoints under one
+  role).
+- **boundary = the block's link set.** `ipld/links` decodes a block and
+  returns exactly `∂(i)` — the generic, schema-free walk every hydrate/GC
+  loop in `kotoba-client` relies on.
+- **the CID *is* the relation's identity.** A block encodes as canonical
+  DAG-CBOR, so `CID(i) = hash(content(i))`, and `content(i)` includes `∂(i)`
+  verbatim: two nodes are the same relation iff their boundaries (labels,
+  orientation, multiplicities, and the CIDs they point at) are identical.
+  Mutating one endpoint changes the owning node's CID, which changes every
+  ancestor's CID up to the head — append-only, tamper-evident, structurally
+  shareable.
+
+Every layer in the umbrella pipeline above is this same incidence-merkle
+graph at a different granularity:
+
+| layer | the incidence relation | its labelled endpoints |
+|---|---|---|
+| `prolly-tree` node | one tree node | `children[i]` — ordered, repeatable |
+| `commit-dag` commit | one commit | `prev`, `index-roots/{spo,pso,pos,ocp}` |
+| `quad-store` commit | the 4-index snapshot | one endpoint per covering index |
+| a datom `[e a v]` | the relation itself | `e`, `a`, `v` — 3 labelled endpoints |
+
+Datoms are the base case, not an exception: `[e a v]` (`kotoba.kgraph`'s EAVT
+model) is already a minimal incidence relation with three named endpoints, so
+kotobase's Datalog-visible datom shape and its IPLD storage shape share one
+vocabulary top to bottom. A *tree* — binary, unlabelled parent/child — is
+just the special case of this graph with exactly one anonymous endpoint role.
+
 ## `IStore` — the storage seam
 
 The **external-storage port** for com-junkawasaki apps — one `IStore` seam that lets an
@@ -59,6 +104,17 @@ kotobase.store/IStore           put · get · list · append · read(since)
         └── kotobase.kotobase/KotobaseStore   forwards every op to an injected
                  `(xrpc method params)` → kotobase.net XRPC → the kotoba PDS,
                  which itself backs onto external object storage (git-annex/B2, S3)
+```
+
+Backends that can provide strong commits additionally implement
+`ITransactionalStore`: `-snapshot` returns all requested collections and
+streams at one tenant revision, and `-transact` compares that revision before
+atomically applying document mutations and ordered appends. Transaction ids are
+idempotent. `LocalStore` is the reference implementation. Remote use is an
+explicit capability negotiation so older servers remain compatible:
+
+```clojure
+(kb/kotobase-store xrpc {:transactional? true})
 ```
 
 Two shapes of state cover both apps:
@@ -83,9 +139,129 @@ Two shapes of state cover both apps:
 (def s (kb/kotobase-store (fn [method params] (call-kotobase! method params))))
 ```
 
+## Datomic-centred graph API
+
+`kotobase.graph-store` turns any `ITransactionalStore` into one immutable datom
+history. Datalog and structured SPARQL/Cypher are adapters over the same database
+value; Git objects and refs are projected into that history rather than stored
+in a parallel database.
+
+```clojure
+(require '[kotobase.graph-store :as graph])
+
+(graph/transact! s {:tx-id "people-1"
+                    :tx-data [[:db/add 1 :person/name "Ada"]
+                              [:db/add 1 :person/knows 2]
+                              [:db/add 2 :person/name "Grace"]]})
+
+(graph/q s {:language :sparql
+            :select '[?name]
+            :where '[[?ada :person/name "Ada"]
+                     [?ada :person/knows ?friend]
+                     [?friend :person/name ?name]]})
+;; => [["Grace"]]
+
+(graph/db s 1)       ; immutable database value as-of basis t=1
+(graph/history s)    ; assertions and retractions
+(graph/since s 1)    ; changes after t=1
+```
+
+Writes require `ITransactionalStore` and fail closed on a legacy backend. This
+preserves atomic multi-datom transactions, revision conflict detection and
+idempotent transaction IDs instead of silently degrading Datomic semantics.
+
+## Dataset marketplace and LLM training suitability
+
+`kotobase.dataset` adds a BigQuery-style dataset catalog on the same datom
+history. Dataset bytes are immutable CID-addressed objects; catalog facts expose
+title, source, license, languages, splits, row/byte counts, offer price and an
+explainable LLM-training suitability score.
+
+The 0–100 score covers license clarity, provenance, quality, deduplication, PII
+safety, toxicity safety, language metadata and format readiness. Eligibility
+also has hard gates: known training license, explicit rights assertion,
+license clarity, PII safety, provenance and quality. Common Crawl-derived data
+may be catalogued, but raw mixed-rights web data is **not** marked training-ready;
+only a filtered derivative with reviewable rights/safety evidence can pass.
+
+```clojure
+(require '[kotobase.dataset :as dataset])
+
+(dataset/publish! s verify-manifest-cid manifest)
+(dataset/training-datasets s)
+;; => [[dataset-id title suitability-score] ...]
+
+;; Every catalog fact is available to ordinary Datalog, structured SPARQL and
+;; structured Cypher through kotobase.graph-store/q.
+```
+
+The marketplace sells a licensed dataset snapshot/entitlement, not ownership of
+third-party source material. Price and commercial terms never override the
+training-eligibility gates.
+
+## User-owned public and private datasets
+
+`kotobase.marketplace` lets any authenticated publisher DID retain a dataset as
+`:private`, share it as `:unlisted`, or list it as `:public`. Ownership and
+visibility are datoms. Private datasets are absent from discovery and their CID
+is returned only to the owner or a buyer holding an active entitlement.
+
+Offers bind seller, dataset, currency, price, license kind and an immutable
+commercial-terms CID. The seller must own the dataset. Entitlements are issued
+only through a host-injected payment-receipt verifier and can be revoked without
+deleting their audit history. Actual bytes remain behind an authorization-aware
+CID gateway; catalog visibility alone never grants private byte access.
+
 The contract suite asserts `KotobaseStore ≡ LocalStore` over a faithful transport, so a
 live kotobase.net backend is correct iff it passes the same checks
 (`MemStore ≡ DatomicStore` discipline).
+
+## Content-addressed code graph
+
+`kotobase.code-graph` implements the C2–C5 portable storage/query seam from
+`kotoba-lang/kotoba-lang`'s
+`ADR-kotoba-content-addressed-codebase.md`. It runs over the same `IStore` on a
+local atom or kotobase.net XRPC and provides:
+
+- mandatory host-injected CID verification before definition, type, artifact,
+  namespace, migration-attestation, and receipt admission;
+- dependency-first definition storage and Datom projection;
+- dependency closure, reverse dependency, and transitive effect queries;
+- compiler-contract-keyed Wasm artifact reuse and analysis caches;
+- immutable causal namespace commits (`name -> definition CID`), explicit
+  three-way merge conflicts, and hash-qualified resolution;
+- capability-checked execution receipt persistence linking code, artifact,
+  input/output roots, package lock, policy, CACAO grants, and host receipts;
+- authorization-gated sealed/private views, two-XRPC-node missing-block sync,
+  verified artifact transfer/reuse, and a host-neutral CID-root execution
+  coordinator;
+- authorized cross-contract identity migration attestations; and
+- auditable pin/revoke events plus a non-destructive GC plan for namespace, release,
+  deployment, audit, research, and legal-hold roots.
+
+Cryptographic codecs remain in the language/block layer: the integration suite
+uses `kotoba.semantic-code`'s canonical DAG-CBOR definition, namespace,
+closure, and execution blocks with real CIDv1 verification. Run it with:
+
+```bash
+clojure -M:integration
+```
+
+CID possession is never authority. Package signatures/admission, CACAO,
+capability intersection, local policy, and Wasm host confinement remain
+separate mandatory gates.
+
+### Promise/async hosts
+
+`kotobase.code-graph-async/run!` makes the complete synchronous code-graph API
+usable over a Promise-returning IStore. For `ITransactionalStore`, it reads one
+revisioned snapshot and flushes all changed documents and new events with one
+revision-checked transaction, preventing fractured code-graph commits. Legacy
+IStore backends retain the collection-by-collection compatibility path, with
+appends flushed in program order.
+Use `promise-runtime` in ClojureScript; other completion models can inject the
+same `resolve`/`then`/`all` algebra. CI compiles and executes this path under
+Node as real ClojureScript rather than relying only on the synchronous JVM test.
 
 ## Consumers
 
@@ -95,17 +271,19 @@ The cloud API workers [local-murakumo](https://github.com/gftdcojp/local-murakum
 Workers) inject a `fetch`-based `xrpc` and serve the app API straight off the
 `:kotobase` store; the desktop/CLI apps use `:local`.
 
-> **Naming note (2026-07-08):** as of this writing, both cloud-murakumo's and
-> cloud-manimani's `deps.edn` actually depend on
-> `io.github.com-junkawasaki/kotobase-clj` (a separate repo,
-> `orgs/com-junkawasaki/kotobase-clj`, with an identical
-> `kotobase.store`/`local`/`kotobase` file layout and contract test) rather
-> than on this repo by name. Whether that is a pre-rename copy, a fork, or
-> the currently-authoritative artifact is unresolved -- see
-> `docs/coverage.edn`'s M5 note. Until a real dependent names
-> `kotoba-lang/kotobase` specifically, treat the description above as the
-> intended architecture, not a confirmed dependency graph.
+> **Naming note:** the old `io.github.com-junkawasaki/kotobase-clj` coordinate
+> redirects to this renamed repository. Current west-managed consumers use
+> `io.github.kotoba-lang/kotobase`; see `docs/coverage.edn`'s resolved M5 note.
 
 ```bash
 clojure -M:test     # LocalStore + KotobaseStore both satisfy the IStore contract
+clojure -M:cljs-test -m cljs.main ... # compile/run Promise IStore code graph
 ```
+# Datomic-centred graph query
+
+`kotobase.graph-query` defines the portable graph boundary: Datomic-shaped
+datoms are canonical, and Datalog, structured SPARQL/Cypher patterns, and Git
+objects/refs are adapters to that model. `execute` is a small conformance oracle
+for tests and benchmarks; production hosts execute the compiled query in their
+indexed engine. This avoids claiming full textual SPARQL or Bolt compatibility
+while giving every surface one tested semantic contract.

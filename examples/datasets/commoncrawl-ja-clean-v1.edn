@@ -1,0 +1,26 @@
+{:dataset/id "dataset/commoncrawl-ja-clean-v1"
+ :dataset/cid "REPLACE_WITH_VERIFIED_MANIFEST_CID"
+ :dataset/title "Common Crawl Japanese Clean v1"
+ :dataset/description "Example manifest; not a claim that a production dataset has passed review"
+ :dataset/source "commoncrawl/WARC-derived"
+ :dataset/owner "did:key:REPLACE_WITH_PUBLISHER_DID"
+ :dataset/visibility :private
+ :dataset/license :odc-by-1.0
+ :dataset/rights-asserted? true
+ :dataset/format :parquet
+ :dataset/rows 0
+ :dataset/bytes 0
+ :dataset/languages ["ja"]
+ :dataset/splits {:train 0 :validation 0 :test 0}
+ :dataset/offer-kind :one-time
+ :dataset/price-currency "JPY"
+ :dataset/price-micros 0
+ :dataset/scores
+ {:license-clarity 0
+  :provenance 0
+  :quality 0
+  :deduplication 0
+  :pii-safety 0
+  :toxicity-safety 0
+  :language-metadata 0
+  :format-readiness 0}}

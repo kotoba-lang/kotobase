@@ -23,4 +23,17 @@
   (-append [s stream event] "Append `event` to `stream`; returns it stamped with :seq.")
   (-read   [s stream since] "Events in `stream` with :seq > `since` (0/nil = from start), :seq-ordered."))
 
+(defprotocol ITransactionalStore
+  "Optional strong extension to IStore. A snapshot is read at one tenant
+  revision; transact atomically compares that revision and publishes every
+  document mutation and stream append at one new revision."
+  (-snapshot [s scope]
+    "Read one revision. SCOPE is {:collections [...] :streams [...]} and the
+    result is {:revision n :docs {...} :streams {...}}.")
+  (-transact [s request]
+    "Atomically apply {:tx-id :expected-revision :puts :deletes :appends}.
+    Replaying a tx-id returns its original receipt; a stale expected revision
+    throws RevisionConflict without applying any mutation."))
+
 (defn store? [x] (satisfies? IStore x))
+(defn transactional-store? [x] (satisfies? ITransactionalStore x))
