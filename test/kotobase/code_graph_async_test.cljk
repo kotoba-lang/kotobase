@@ -12,7 +12,7 @@
         result (async/run!
                 async/immediate-runtime remote
                 #(code/put-definition!
-                  % verify {:cid "cid-main" :block {:cid "cid-main"}
+                  % verify verify {:cid "cid-main" :block {:cid "cid-main"}
                             :dependency-cids [] :effects ["graph-read"]}))]
     (is (= "cid-main" (:code.definition/cid result)))
     (is (= result (store/-get remote code/definitions "cid-main")))
