@@ -1,5 +1,5 @@
 (ns kotobase.disclosure-grant-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kotobase.disclosure-grant :as d]
             [kotobase.execution-identity :as id]))
 

@@ -1,5 +1,5 @@
 (ns kotobase.retention-qualification-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.test :refer [deftest is]]
             [kotobase.retention-qualification :as retention]))
 
 (def policy (retention/read-policy))

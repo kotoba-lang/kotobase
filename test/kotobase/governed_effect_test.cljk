@@ -5,7 +5,7 @@
   record a governed effect leaves is about the effect that ran: the granted
   set the admission actually computed, the outcome the effect actually named,
   and a cost read after it."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kotobase.effect-contract :as contract]
             [kotobase.evidence :as evidence]
             [kotobase.execution-identity :as id]

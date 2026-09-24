@@ -1,6 +1,6 @@
 (ns kotobase.canonical-route-policy-test
   (:require 
-            [clojure.test :refer [deftest is testing]]))
+            [kotoba.test :refer [deftest is testing]]))
 
 (deftest official-qualification-ci-does-not-install-a-rust-toolchain
   (let [workflow (slurp ".github/workflows/ci.yml")]

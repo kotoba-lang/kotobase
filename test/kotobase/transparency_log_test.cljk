@@ -1,5 +1,5 @@
 (ns kotobase.transparency-log-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.test :refer [deftest is]]
             [kotobase.transparency-log :as log]))
 
 (def policy {:required-witnesses #{:operations :independent-auditor}

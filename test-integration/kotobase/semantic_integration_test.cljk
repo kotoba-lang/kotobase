@@ -1,5 +1,5 @@
 (ns kotobase.semantic-integration-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.test :refer [deftest is]]
             [kotoba.semantic-code :as semantic]
             [kotobase.code-graph :as code]
             [kotobase.local :as local]))

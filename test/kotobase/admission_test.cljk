@@ -1,5 +1,5 @@
 (ns kotobase.admission-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.test :refer [deftest is]]
             [kotobase.admission :as admission]))
 
 (def base

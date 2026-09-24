@@ -1,5 +1,5 @@
 (ns kotobase.canonical-causal-commit-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [identity.adapters.ledger :as identity-ledger]
             [kotobase.causal-commit :as causal]
             [kotobase.causal-trust-test :as fixture]

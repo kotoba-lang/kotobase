@@ -1,6 +1,6 @@
 (ns kotobase.guarded-test
   (:require [clojure.set :as set]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             ;; `the-unguarded-surface-is-declared-and-the-declaration-is-true`
             ;; asks `ns-publics` about `kotobase.core`, so this namespace has
             ;; to load it. Without the require it passed only because some

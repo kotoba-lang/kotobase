@@ -3,7 +3,7 @@
   `kotobase.qualification-host` — no java.* or clojure.java.* here."
   (:require [clojure.edn :as edn]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [kotoba.compiler.core :as compiler]
             [kotobase.qualification-host :as host]
             [sha2.core :as sha2]))

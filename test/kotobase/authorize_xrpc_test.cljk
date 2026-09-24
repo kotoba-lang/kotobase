@@ -6,7 +6,7 @@
   is the only thing between a host transport and every remote kotobase
   operation, so the first thing each test below states is which direction it
   pins -- an allow that cannot be made to deny is not evidence of anything."
-  (:require #?(:clj [clojure.test :refer [deftest is testing]]
+  (:require #?(:clj [kotoba.test :refer [deftest is testing]]
                :cljs [cljs.test :refer [deftest is testing] :include-macros true])
             [kotobase.kotobase :as kb]))
 

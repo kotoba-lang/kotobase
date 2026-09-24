@@ -1,5 +1,5 @@
 (ns kotobase.recovery-qualification-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.test :refer [deftest is]]
             [kotobase.recovery-qualification :as recovery]))
 
 (def policy (recovery/read-policy))

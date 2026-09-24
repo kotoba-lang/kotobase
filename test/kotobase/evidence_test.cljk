@@ -1,6 +1,6 @@
 (ns kotobase.evidence-test
   (:require [clojure.set :as set]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [kotobase.effect-contract :as effect]
             [kotobase.evidence :as evidence]
             [kotobase.execution-contract :as contract]

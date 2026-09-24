@@ -1,5 +1,5 @@
 (ns kotobase.execution-keys-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kotobase.execution-identity :as id]
             [kotobase.execution-keys :as keys]
             [kotobase.governed-execution :as governed]

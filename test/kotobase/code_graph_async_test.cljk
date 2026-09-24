@@ -1,5 +1,5 @@
 (ns kotobase.code-graph-async-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.test :refer [deftest is]]
             [kotobase.code-graph :as code]
             [kotobase.code-graph-async :as async]
             [kotobase.local :as local]

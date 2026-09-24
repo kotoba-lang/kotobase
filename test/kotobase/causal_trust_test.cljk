@@ -1,5 +1,5 @@
 (ns kotobase.causal-trust-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [grant.causal-trust :as trust]
             [identity.adapters.ledger :as identity-ledger]
             [identity.causal :as causal]

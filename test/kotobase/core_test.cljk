@@ -1,5 +1,5 @@
 (ns kotobase.core-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.test :refer [deftest is]]
             [kotobase.core :as kotobase]
             [kotobase.storage.memory :as memory]))
 
