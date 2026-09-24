@@ -27,7 +27,7 @@
 
   Validation is exact and fail closed, and version 1 is closed the same way:
   new fields require a new version and an explicit compatibility decision."
-  (:require [clojure.set :as set]))
+  (:require [kotoba.lang.coll :as set]))
 
 (def version 1)
 

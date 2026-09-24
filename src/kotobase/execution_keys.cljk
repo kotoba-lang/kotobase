@@ -32,7 +32,7 @@
   What stays outside: the cryptography itself (`verify-with` is injected,
   because this repository does not choose a signature scheme, exactly as it
   does not choose a codec), and how a key came to be in the registry."
-  (:require [clojure.set :as set]))
+  (:require [kotoba.lang.coll :as set]))
 
 (def roles
   "Which authority signs which record.

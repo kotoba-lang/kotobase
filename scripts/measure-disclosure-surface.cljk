@@ -22,7 +22,7 @@
 ;;   kbb --backend sci --classpath "src:<workspace src dirs>" scripts/measure-disclosure-surface.cljk
 
 (ns measure-disclosure-surface
-  (:require [clojure.set :as set]
+  (:require [kotoba.lang.coll :as set]
             [clojure.string :as str]
             ["fs" :as fs]
             [kotobase.execution-contract :as ec]
