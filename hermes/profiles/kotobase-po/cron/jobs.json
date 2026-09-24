@@ -1,0 +1,26 @@
+{
+  "jobs": [
+    {
+      "base_url": "https://api.murakumo.cloud/v1",
+      "context_from": null,
+      "deliver": "local",
+      "enabled": false,
+      "enabled_toolsets": null,
+      "id": "84a50c9f3410",
+      "model": "mishima",
+      "name": "kotobase-canvas-watch",
+      "no_agent": false,
+      "prompt": "A canvas measurement for kotobase just CHANGED. The monitor diff above shows what moved — that diff is why you are running; nothing else triggered you.\n\nYour report IS the artifact. hermes stores this run's output durably; do not write files. You may be running on a provider with no tools at all, so nothing about finishing this job may depend on having them.\n\n1. Say what moved, in numbers, first. Compare against the figures in your SOUL.md. If a figure the SOUL states is now unconfirmed or contradicted, say so explicitly — the SOUL is a snapshot, the ledger is current.\n\n2. Say what the diff does NOT contain. The monitor emits ledger metadata (entry count, seq, timestamp, last event), not traffic or revenue figures. Never restate SOUL numbers as if this run confirmed them.\n\n3. If you have tools, read the fuller picture and use it:\n   cd ~/github/com-junkawasaki && GFTD_ROOT=~/github/com-junkawasaki nbb 70-tools/bmc/bin/gftd.cljs canvas show --product net-kotobase\n   If you have no tools, say which command would answer the open question, and mark your conclusions as unverified.\n\n4. Name at most 3 things to do, each with the metric it should move, which role bot should do it (kotobase-eng / -qa / -sales / -mktg / -support), and how you would know it worked.\n\nHard limits:\n- Do NOT write 90-docs/business/canvas-ledger.edn or anything under ~/github/com-junkawasaki. An existing routine owns that ledger; two writers make it lie.\n- Do NOT send email, post, deploy, or contact anyone.\n- Do NOT invent numbers. If the canvas does not report something, write \"not measured\".",
+      "provider": "murakumo",
+      "schedule": {
+        "kind": "interval",
+        "minutes": 30,
+        "display": "every 30m"
+      },
+      "script": null,
+      "skill": null,
+      "skills": [],
+      "workdir": null
+    }
+  ]
+}

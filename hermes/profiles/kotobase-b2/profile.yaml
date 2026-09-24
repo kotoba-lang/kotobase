@@ -1,0 +1,2 @@
+description: kotobase bytes plane の B2 bytes storage 担当。Backblaze B2 (kotobase-cf-wasm-production) の storage cost / operations、Cloudflare Bandwidth Alliance 経由の alliance 配信監視、R2→B2 移行の soak、KOTOBASE_ORIGIN_B2 フラグの責任を持つ。propose-only (publish/rollback は owner go-ahead)。
+description_auto: false
