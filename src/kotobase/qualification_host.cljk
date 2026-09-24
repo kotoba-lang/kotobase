@@ -11,7 +11,7 @@
   real compiler, real node, and a real C toolchain — that is build-time host
   work with no ClojureScript meaning, exactly like the js-kotoba-v1 and
   wasm32-browser host runtimes it exercises."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.bytes :as kbytes] [kotoba.io :as kio] [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [kotoba.lang.text :as str]))
 
@@ -59,8 +59,8 @@
 (defn temp-dir!
   "Create a unique temp directory; returns its path string."
   [prefix]
-  (str (java.nio.file.Files/createTempDirectory
-        prefix (make-array java.nio.file.attribute.FileAttribute 0))))
+  (str (kio/temp-dir
+        prefix)))
 
 (defn delete-tree!
   "Recursively delete a directory tree (path string). Missing = no-op."
@@ -74,7 +74,7 @@
   "UTF-8 of a string as a vector of unsigned byte values (0..255)."
   [^String s]
   (map #(let [b (int %)] (if (neg? b) (+ b 256) b))
-       (.getBytes s "UTF-8")))
+       (kbytes/utf8-bytes s)))
 
 ;; ---------- process ----------
 
@@ -101,7 +101,7 @@
 (defn b64-encode
   "Standard base64 of a byte array -> string."
   [^bytes bytes]
-  (.encodeToString (java.util.Base64/getEncoder) bytes))
+  (kbytes/base64-encode bytes))
 
 ;; ---------- host facts ----------
 

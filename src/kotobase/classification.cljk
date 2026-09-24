@@ -20,7 +20,7 @@
      what makes erasure possible at all: the chain preserves retracted facts
      on purpose (that is what an audit view is for), so a body written inline
      can never be erased, while a key can be destroyed."
-  (:require [clojure.set :as set]))
+  (:require [kotoba.lang.coll :as set]))
 
 (def classes
   "Ordered, least sensitive first. An order is needed because the rules below

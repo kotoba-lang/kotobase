@@ -1,5 +1,5 @@
 (ns kotobase.canonical-causal-commit-test
-  (:require [kotoba.test :refer [deftest is testing]]
+  (:require [kotoba.bytes :as kbytes] [kotoba.test :refer [deftest is testing]]
             [identity.adapters.ledger :as identity-ledger]
             [kotobase.causal-commit :as causal]
             [kotobase.causal-trust-test :as fixture]
@@ -94,7 +94,7 @@
           commit-cid (:receipt/commit-cid ack)]
       (swap! (:state backend) assoc-in
              [:blocks commit-cid]
-             (.getBytes "forged" "UTF-8"))
+             (kbytes/utf8-bytes "forged"))
       (is (thrown? clojure.lang.ExceptionInfo
                    (causal/receipt-at db commit-cid "bafy-forgery")))))
 

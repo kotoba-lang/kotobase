@@ -4,7 +4,7 @@
   Crypto and durable storage remain host ports. No plaintext or unwrapped key
   enters this module. A delivery receipt means authorised envelope release,
   never human reading, successful decryption, or absence of out-of-band copies."
-  (:require [clojure.set :as set]
+  (:require [kotoba.lang.coll :as set]
             [kotobase.authority-window :as window]
             [kotobase.execution-identity :as identity]
             [kotobase.execution-keys :as keys]

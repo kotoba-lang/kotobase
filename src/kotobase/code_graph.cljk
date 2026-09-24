@@ -4,7 +4,7 @@
   This namespace intentionally depends only on IStore. Cryptographic block
   verification is host-injected as `(verify cid block)`, keeping kotobase-clj
   portable while making verification mandatory on admission."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [kotobase.store :as store]))
 
 (def definitions "code.definitions")

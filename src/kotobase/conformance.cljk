@@ -48,7 +48,7 @@
   show the harness discriminates and is not enough to claim cross-protocol
   agreement. A protocol frontend plugs in the same way, and the day one does,
   this is what it has to pass."
-  (:require [clojure.set :as set]
+  (:require [kotoba.lang.coll :as set]
             [kotobase.authorized-query :as query]
             [kotobase.execution-contract :as contract]))
 

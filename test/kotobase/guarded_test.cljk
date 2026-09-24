@@ -1,5 +1,5 @@
 (ns kotobase.guarded-test
-  (:require [clojure.set :as set]
+  (:require [kotoba.lang.coll :as set]
             [kotoba.test :refer [deftest is testing]]
             ;; `the-unguarded-surface-is-declared-and-the-declaration-is-true`
             ;; asks `ns-publics` about `kotobase.core`, so this namespace has

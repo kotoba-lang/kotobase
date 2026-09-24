@@ -11,7 +11,7 @@
 
 (ns run-storage
   (:require [kotoba.lang.text :as str]
-            [clojure.set]
+            [kotoba.lang.coll]
             [cbor.core :as cbor]
             [multiformats.core :as mf]
             [prolly-tree.core :as pt]
@@ -167,8 +167,8 @@
         tenant-b (set (keys (:blocks @(:store pt2))))
         leakage {:tenant-a-blocks (count tenant-a)
                  :tenant-b-blocks (count tenant-b)
-                 :shared-block-addresses (count (clojure.set/intersection tenant-a tenant-b))
-                 :shared-pct (r2 (* 100.0 (/ (double (count (clojure.set/intersection tenant-a tenant-b)))
+                 :shared-block-addresses (count (kotoba.lang.coll/intersection tenant-a tenant-b))
+                 :shared-pct (r2 (* 100.0 (/ (double (count (kotoba.lang.coll/intersection tenant-a tenant-b)))
                                              (max 1 (count tenant-a)))))
                  :note "with convergent encryption these are byte-identical objects; the server learns the overlap"}
         ;; an encrypted value index cannot be prefix-scanned by value: the

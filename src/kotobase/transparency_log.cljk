@@ -1,6 +1,6 @@
 (ns kotobase.transparency-log
   "Key-epoch-aware transparency checkpoints and receipt retention."
-  (:require [clojure.set :as set]
+  (:require [kotoba.lang.coll :as set]
             [kotobase.digest :as digest]))
 
 (def genesis (apply str (repeat 64 "0")))

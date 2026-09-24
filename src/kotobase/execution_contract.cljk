@@ -4,7 +4,7 @@
   Validation is deliberately exact and fail closed. Protocol adapters may
   translate their own ASTs into these records, but they may not add implicit
   defaults or protocol-specific fields to the signed contract."
-  (:require [clojure.set :as set]))
+  (:require [kotoba.lang.coll :as set]))
 
 (def version 1)
 

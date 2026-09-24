@@ -50,7 +50,7 @@
   depends on this repository, so a carrier for its records cannot live here
   without either a dependency cycle or a copy of its shape — and a copy of a
   shape is the thing this namespace exists to stop being necessary."
-  (:require [clojure.set :as set]
+  (:require [kotoba.lang.coll :as set]
             [kotobase.effect-contract :as effect]
             [kotobase.execution-contract :as contract]))
 

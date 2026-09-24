@@ -4,7 +4,7 @@
   A CID proves bytes, never authority. Production callers must pass package
   admission, delegated grants, local policy, and durable audit admission
   before the effect thunk can run."
-  (:require [clojure.set :as set]))
+  (:require [kotoba.lang.coll :as set]))
 
 (def production-actions #{:hydrate :execute :pin})
 
