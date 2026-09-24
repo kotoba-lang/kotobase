@@ -11,7 +11,7 @@
   ExecutionReceipt, which answers every field of the version 1 contract, in
   place of a disclosure receipt, which answered one — see
   `docs/ADR-evidence-plane.md`."
-  (:require #?(:clj [clojure.edn :as edn]
+  (:require #?(:clj [kotoba.lang.edn :as edn]
                :cljs [cljs.reader :as edn])
             [grant.causal-trust :as trust]
             [identity.adapters.ledger :as identity-ledger]

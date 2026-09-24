@@ -3,7 +3,7 @@
   backends. All host filesystem/process access goes through the ONE adapter
   namespace `kotobase.qualification-host` — no java.* or clojure.java.*
   here; paths are strings, bytes are arrays, processes are {:exit :out :err}."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [kotoba.lang.text :as str]
             [kotoba.test :refer [deftest is testing]]
             [kotoba.compiler.core :as compiler]

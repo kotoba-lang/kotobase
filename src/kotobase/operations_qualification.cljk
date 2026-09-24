@@ -1,6 +1,6 @@
 (ns kotobase.operations-qualification
   "Fail-closed operational-security readiness evaluation."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.set :as set]))
 
 (def policy-path "qualification/operations-policy.edn")

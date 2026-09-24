@@ -3,7 +3,7 @@
 
   Cryptographic signing is injected by the deployment key service; this module
   binds each receipt to its predecessor and an independently observed anchor."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [kotobase.digest :as digest]))
 
 (def policy-path "qualification/audit-anchor-policy.edn")
