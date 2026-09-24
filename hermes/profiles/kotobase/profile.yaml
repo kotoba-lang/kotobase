@@ -1,0 +1,3 @@
+description: kotobase 担当。データベース(kotobase-engine/storage 系)、Cloudflare Workers、net-kotobase(kotobase.net)を含む
+  kotobase 系の保守・開発・デプロイ。
+description_auto: false
