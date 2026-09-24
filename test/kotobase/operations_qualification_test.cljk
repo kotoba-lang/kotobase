@@ -1,5 +1,5 @@
 (ns kotobase.operations-qualification-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.test :refer [deftest is]]
             [kotobase.operations-qualification :as operations]))
 
 (def policy (operations/read-policy))

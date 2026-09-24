@@ -6,7 +6,7 @@
   discriminates and not enough to claim cross-protocol agreement, and the
   namespace docstring says so. What is being tested is the comparison, so the
   interesting cases are the ones where it must refuse."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kotobase.conformance :as conformance]
             [kotobase.execution-identity :as id]
             [kotobase.governed-execution :as governed]

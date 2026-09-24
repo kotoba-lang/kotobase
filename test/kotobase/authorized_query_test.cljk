@@ -1,5 +1,5 @@
 (ns kotobase.authorized-query-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.test :refer [deftest is]]
             [kotobase.authorized-query :as query]))
 
 (defn v [name] (symbol (str "?" name)))

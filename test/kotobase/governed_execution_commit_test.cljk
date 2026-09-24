@@ -7,7 +7,7 @@
   written and can be read back from the commit it produced. Here the sink is
   `kotobase.causal-commit/execution-receipt-sink` over an in-memory store, and
   the receipt is re-read at an exact commit CID."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kotobase.causal-commit :as causal]
             [kotobase.core :as core]
             [kotobase.governed-execution :as governed]

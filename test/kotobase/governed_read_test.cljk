@@ -7,7 +7,7 @@
   second is the reason this namespace exists at all — deleting a path and its
   checks together would have been a regression wearing a consolidation's
   clothes."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kotobase.causal-commit :as causal]
             [kotobase.causal-trust-test :as trust-fixture]
             [kotobase.core :as core]

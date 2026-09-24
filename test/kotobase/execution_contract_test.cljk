@@ -1,5 +1,5 @@
 (ns kotobase.execution-contract-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kotobase.execution-contract :as contract]))
 
 (def manifest

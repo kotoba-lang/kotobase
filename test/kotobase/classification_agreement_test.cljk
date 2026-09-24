@@ -11,7 +11,7 @@
   kagitaba is a sibling repo and is not a dependency of this one, so the values
   it uses are restated here — which is exactly why this test exists: a restated
   constant is a copy, and a copy needs something to hold it to its original."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kotobase.classification :as classification]))
 
 ;; kagitaba.field, restated. If kagitaba changes these, this test is where the

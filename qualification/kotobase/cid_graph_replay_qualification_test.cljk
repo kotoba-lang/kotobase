@@ -5,7 +5,7 @@
   here; paths are strings, bytes are arrays, processes are {:exit :out :err}."
   (:require [clojure.edn :as edn]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [kotoba.compiler.core :as compiler]
             [kotobase.qualification-host :as host]))
 

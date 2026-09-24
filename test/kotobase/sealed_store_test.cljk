@@ -1,5 +1,5 @@
 (ns kotobase.sealed-store-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.test :refer [deftest is]]
             [kotobase.kotobase :as kb]
             [kotobase.sealed-store :as sealed]
             [kotobase.store :as st]))

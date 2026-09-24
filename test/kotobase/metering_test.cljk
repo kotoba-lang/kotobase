@@ -6,7 +6,7 @@
   assertion here is either against a second, independent count taken inside
   the provider, or against a control where the work changes and the number has
   to move with it."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kotobase.core :as core]
             [kotobase.governed-read :as governed-read]
             [kotobase.governed-read-test :as fixture]

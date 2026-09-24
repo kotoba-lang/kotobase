@@ -1,5 +1,5 @@
 (ns kotobase.audit-anchor-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.test :refer [deftest is]]
             [kotobase.audit-anchor :as audit]))
 
 (def policy (audit/read-policy))

@@ -1,5 +1,5 @@
 (ns kotobase.code-graph-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kotobase.code-graph :as code]
             [kotobase.kotobase :as remote]
             [kotobase.local :as local]
