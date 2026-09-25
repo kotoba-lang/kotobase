@@ -23,7 +23,7 @@
 
 (ns measure-disclosure-surface
   (:require [kotoba.lang.coll :as set]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             ["fs" :as fs]
             [kotobase.execution-contract :as ec]
             [kotobase.execution-identity :as id]))

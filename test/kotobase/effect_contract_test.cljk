@@ -1,5 +1,5 @@
 (ns kotobase.effect-contract-test
-  (:require [kotoba.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is testing]]
             [kotobase.effect-contract :as effect]))
 
 (def request
@@ -35,8 +35,7 @@
 
 (defn- reason [f]
   (:kotobase.effect-contract/reason
-   (ex-data (try (f) nil (catch #?(:clj clojure.lang.ExceptionInfo
-                                   :cljs ExceptionInfo) e e)))))
+   (ex-data (try (f) nil (catch kerror/ExceptionInfo e e)))))
 
 (deftest the-records-are-exact
   (is (= receipt (effect/validate-receipt! receipt)))

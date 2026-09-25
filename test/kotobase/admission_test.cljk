@@ -1,5 +1,5 @@
 (ns kotobase.admission-test
-  (:require [kotoba.test :refer [deftest is]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is]]
             [kotobase.admission :as admission]))
 
 (def base
@@ -50,7 +50,7 @@
                (assoc base :cid-verified? false)]]
     (let [effects (atom 0)
           audits (atom [])]
-      (is (thrown? clojure.lang.ExceptionInfo
+      (is (thrown? kerror/ExceptionInfo
                    (admission/guard!
                     (merge bad {:action :execute
                                 :requested-effects #{:code/execute}
@@ -63,7 +63,7 @@
 (deftest audit-failure-blocks-even-otherwise-authorized-effect
   (let [effects (atom 0)]
     (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo #"audit persistence failed"
+         kerror/ExceptionInfo #"audit persistence failed"
          (admission/guard!
           (merge base {:action :execute
                        :requested-effects #{:code/execute}

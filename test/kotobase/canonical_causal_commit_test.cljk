@@ -1,5 +1,5 @@
 (ns kotobase.canonical-causal-commit-test
-  (:require [kotoba.bytes :as kbytes] [kotoba.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [kotoba.test :refer [deftest is testing]]
             [identity.adapters.ledger :as identity-ledger]
             [kotobase.causal-commit :as causal]
             [kotobase.causal-trust-test :as fixture]
@@ -66,7 +66,7 @@
           {:keys [backend writes]} (failing-block-backend delegate)
           db (database backend)]
       (is (thrown-with-msg?
-           clojure.lang.ExceptionInfo
+           kerror/ExceptionInfo
            #"injected block failure"
            (identity-ledger/persist-transition!
             (causal/identity-ledger db)
@@ -95,12 +95,12 @@
       (swap! (:state backend) assoc-in
              [:blocks commit-cid]
              (kbytes/utf8-bytes "forged"))
-      (is (thrown? clojure.lang.ExceptionInfo
+      (is (thrown? kerror/ExceptionInfo
                    (causal/receipt-at db commit-cid "bafy-forgery")))))
 
   (testing "legacy numeric revisions cannot cross the migration boundary"
     (let [db (database (memory/memory-store))]
-      (is (thrown? clojure.lang.ExceptionInfo
+      (is (thrown? kerror/ExceptionInfo
                    (identity-ledger/transact!
                     (causal/identity-ledger db)
                     [{:db/id "epoch:new"}]
@@ -109,7 +109,7 @@
 
   (testing "a decision cannot be committed against a different basis"
     (let [db (database (memory/memory-store))]
-      (is (thrown? clojure.lang.ExceptionInfo
+      (is (thrown? kerror/ExceptionInfo
                    (causal/persist-decision!
                     db
                     (assoc fixture/receipt-template

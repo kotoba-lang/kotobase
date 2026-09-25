@@ -1,5 +1,5 @@
 (ns kotobase.evidence-test
-  (:require [kotoba.lang.coll :as set]
+  (:require [kotoba.lang.error :as kerror] [kotoba.lang.coll :as set]
             [kotoba.test :refer [deftest is testing]]
             [kotobase.effect-contract :as effect]
             [kotobase.evidence :as evidence]
@@ -9,14 +9,12 @@
 
 (defn- reason [f]
   (let [data (ex-data (try (f) nil
-                           (catch #?(:clj clojure.lang.ExceptionInfo
-                                     :cljs ExceptionInfo) e e)))]
+                           (catch kerror/ExceptionInfo e e)))]
     (:kotobase.evidence/reason data)))
 
 (defn- data-of [f]
   (ex-data (try (f) nil
-                (catch #?(:clj clojure.lang.ExceptionInfo
-                          :cljs ExceptionInfo) e e))))
+                (catch kerror/ExceptionInfo e e))))
 
 (def decision
   "The shape `grant.causal-trust/receipt` validates and `kotobase.causal-commit`

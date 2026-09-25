@@ -1,5 +1,5 @@
 (ns kotobase.authorized-query-test
-  (:require [kotoba.test :refer [deftest is]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is]]
             [kotobase.authorized-query :as query]))
 
 (defn v [name] (symbol (str "?" name)))
@@ -26,7 +26,7 @@
     (is (= :projection-denied
            (:kotobase.query/reason
             (ex-data (try (query/compile! #(assoc (authorize %) :projection #{:invoice/id}) request)
-                          (catch #?(:clj clojure.lang.ExceptionInfo :cljs ExceptionInfo) e e))))))))
+                          (catch kerror/ExceptionInfo e e))))))))
 
 (deftest query-receipt-projection-keeps-the-query-basis-and-scope
   (let [compiled (query/compile! authorize request)]
@@ -39,11 +39,11 @@
   (is (= :invalid-query
          (:kotobase.query/reason
           (ex-data (try (query/compile! authorize (dissoc request :scope))
-                        (catch #?(:clj clojure.lang.ExceptionInfo :cljs ExceptionInfo) e e))))))
+                        (catch kerror/ExceptionInfo e e))))))
   (is (= :basis-mismatch
          (:kotobase.query/reason
           (ex-data (try (query/compile! #(assoc (authorize %) :basis "other") request)
-                        (catch #?(:clj clojure.lang.ExceptionInfo :cljs ExceptionInfo) e e)))))))
+                        (catch kerror/ExceptionInfo e e)))))))
 
 (deftest a-read-that-leaves-no-receipt-is-refused
   ;; `kotobase.admission` will not run an effect until its audit says durable,
@@ -55,8 +55,7 @@
         reason (fn [sink]
                  (:kotobase.query/reason
                   (ex-data (try (query/execute! rows sink compiled)
-                                (catch #?(:clj clojure.lang.ExceptionInfo
-                                          :cljs ExceptionInfo) e e)))))]
+                                (catch kerror/ExceptionInfo e e)))))]
     (is (= :missing-receipt-sink (reason nil)))
     (is (= :receipt-not-durable (reason (fn [_] nil))))
     (is (= :receipt-not-durable (reason (fn [_] {:receipt/durable? false
@@ -103,7 +102,7 @@
   (is (= :invalid-query
          (:kotobase.query/reason
           (ex-data (try (query/compile! authorize recursive-query)
-                        (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo) e e)))))))
+                        (catch kerror/ExceptionInfo e e)))))))
 
 ;; Mutual recursion: A -> B -> A
 (def mutual-recursive-query
@@ -118,7 +117,7 @@
   (is (= :invalid-query
          (:kotobase.query/reason
           (ex-data (try (query/compile! authorize mutual-recursive-query)
-                        (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo) e e)))))))
+                        (catch kerror/ExceptionInfo e e)))))))
 
 ;; --- Static analysis: join explosion detection ------------------------------
 
@@ -136,7 +135,7 @@
   (is (= :invalid-query
          (:kotobase.query/reason
           (ex-data (try (query/compile! authorize join-explosion-query)
-                        (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo) e e))))))
+                        (catch kerror/ExceptionInfo e e))))))
 
 ;; Star join pattern - center variable connects to many leaves
 (def star-join-query
@@ -153,5 +152,5 @@
   (is (= :invalid-query
          (:kotobase.query/reason
           (ex-data (try (query/compile! authorize star-join-query)
-                        (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo) e e)))))))
+                        (catch kerror/ExceptionInfo e e)))))))
 )

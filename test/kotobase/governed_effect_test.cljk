@@ -5,7 +5,7 @@
   record a governed effect leaves is about the effect that ran: the granted
   set the admission actually computed, the outcome the effect actually named,
   and a cost read after it."
-  (:require [kotoba.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is testing]]
             [kotobase.effect-contract :as contract]
             [kotobase.evidence :as evidence]
             [kotobase.execution-identity :as id]
@@ -71,8 +71,7 @@
 
 (defn- reason [f]
   (let [data (ex-data (try (f) nil
-                           (catch #?(:clj clojure.lang.ExceptionInfo
-                                     :cljs ExceptionInfo) e e)))]
+                           (catch kerror/ExceptionInfo e e)))]
     (or (:kotobase.governed-effect/reason data)
         (:kotobase.authority-window/reason data)
         (:kotobase.effect-contract/reason data)

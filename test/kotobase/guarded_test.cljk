@@ -1,5 +1,5 @@
 (ns kotobase.guarded-test
-  (:require [kotoba.lang.coll :as set]
+  (:require [kotoba.lang.error :as kerror] [kotoba.lang.coll :as set]
             [kotoba.test :refer [deftest is testing]]
             ;; `the-unguarded-surface-is-declared-and-the-declaration-is-true`
             ;; asks `ns-publics` about `kotobase.core`, so this namespace has
@@ -34,8 +34,7 @@
   "Either namespace's refusal. The gate rejects with its own key, and a caller
   should not have to know which layer said no — only that nothing was served."
   [f]
-  (let [data (ex-data (try (f) (catch #?(:clj clojure.lang.ExceptionInfo
-                                        :cljs ExceptionInfo) e e)))]
+  (let [data (ex-data (try (f) (catch kerror/ExceptionInfo e e)))]
     (or (:kotobase.guarded/reason data) (:kotobase.query/reason data))))
 
 (deftest a-guarded-read-needs-all-four-or-none-of-it

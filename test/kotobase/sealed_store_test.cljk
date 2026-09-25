@@ -52,7 +52,7 @@
     (let [calls (atom 0)
           remote (sealed/wrap-xrpc
                   (fn [_ _] (swap! calls inc)) bad-options)]
-      (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+      (is (thrown-with-msg? js/Error
                             #"kotobase sealed write denied"
                             (remote :put {:coll "vault" :key "one"
                                           :val {:secret true}})))
@@ -87,7 +87,7 @@
                    (assoc (good-seal value) :envelope/hybrid? false)
                    (good-seal value))))
         remote (sealed/wrap-xrpc (fn [_ _] (swap! calls inc)) bad-options)]
-    (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+    (is (thrown-with-msg? js/Error
                           #"kotobase sealed write denied"
                           (remote :transact
                                   {:puts [["vault" "one" :a]
@@ -98,7 +98,7 @@
 (deftest malformed-batch-shape-fails-closed
   (let [calls (atom 0)
         remote (sealed/wrap-xrpc (fn [_ _] (swap! calls inc)) options)]
-    (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+    (is (thrown-with-msg? js/Error
                           #"invalid sealed transaction put"
                           (remote :transact {:puts [["missing-value"]]})))
     (is (zero? @calls))))
@@ -129,7 +129,7 @@
                     (assoc (roundtrip-seal {:secret true})
                            :sealed/ciphertext-digest "wrong")]]
     (let [remote (sealed/wrap-xrpc (fn [_ _] response) options)]
-      (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+      (is (thrown-with-msg? js/Error
                             #"kotobase sealed read denied"
                             (remote :get {:coll "c" :key "k"}))))))
 
@@ -153,7 +153,7 @@
                               :puts [] :deletes [] :appends []})))))
 (deftest production-profile-refuses-an-unsealed-store
   (let [calls (atom 0)]
-    (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+    (is (thrown-with-msg? js/Error
                           #"incomplete production kotobase security profile"
                           (kb/kotobase-store
                            (fn [_ _] (swap! calls inc))
