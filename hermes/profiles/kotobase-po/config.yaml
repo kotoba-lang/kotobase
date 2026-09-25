@@ -89,7 +89,7 @@ auxiliary:
     base_url: https://api.kotoba.cloud/v1
     model: qwen3.8-flash-next-whitehacker
     provider: kotoba
-_config_version: 45
+_config_version: 46
 mcp_servers:
   cloud-itonami-app:
     command: /bin/sh
