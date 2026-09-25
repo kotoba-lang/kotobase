@@ -1,7 +1,7 @@
 (ns kotobase.cid-crypto-qualification-test
   "All host filesystem/process access goes through the ONE adapter namespace
   `kotobase.qualification-host` — no java.* or clojure.java.* here."
-  (:require [kotoba.lang.edn :as edn]
+  (:require [kotoba.lang.error :as kerror] [kotoba.lang.edn :as edn]
             [kotoba.lang.text :as str]
             [kotoba.test :refer [deftest is testing]]
             [kotoba.compiler.core :as compiler]
@@ -744,11 +744,11 @@
       (testing "a 129th local CID traps at the sealed page bound"
         (let [entries (synthetic-chain-entries 129)
               provider-file (write-block-provider! directory entries)]
-          (is (thrown? clojure.lang.ExceptionInfo
+          (is (thrown? kerror/ExceptionInfo
                        (run-wasm source directory ["external-closure-count"]
                                  "cid-page-overflow"
                                  external-capability-policy [14] entries)))
-          (is (thrown? clojure.lang.ExceptionInfo
+          (is (thrown? kerror/ExceptionInfo
                        (run-native source directory ["external-closure-count"]
                                    "cid-page-overflow"
                                    external-capability-policy "14" provider-file)))))

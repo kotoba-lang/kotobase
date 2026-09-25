@@ -18,7 +18,7 @@
   scheme that changes CID when you reindent has no build cache. A scheme that
   changes CID when you rename a local has a build cache that misses on
   cosmetic edits, and — worse — propagates that miss to every dependent."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.text :as str]
             [cbor.core :as cbor]
             [multiformats.core :as mf]
             [kotoba.codebase.semantic-code :as sc]))
@@ -34,7 +34,7 @@
 
 (defn source-cid [form pretty?]
   (mf/cidv1-raw #?(:cljs (.encode (js/TextEncoder.) (source-text form pretty?))
-                   :clj (.getBytes ^String (source-text form pretty?) "UTF-8"))))
+                   :clj (kbytes/utf8-bytes ^String (source-text form pretty?)))))
 
 (defn- ->canonical
   "S-expression as canonical data. Structure is normalised (deterministic

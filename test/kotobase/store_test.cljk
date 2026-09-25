@@ -76,7 +76,7 @@
                  :audit! #(swap! decisions conj %)})]
     (is (= :ok (st/-get remote "documents" "allowed")))
     (is (thrown-with-msg?
-         #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+         js/Error
          #"ABAC policy denies kotobase operation"
          (st/-get remote "documents" "other")))
     (is (= 1 (count @calls)) "denied operation never reaches transport")
@@ -94,7 +94,7 @@
     (is (= :ok (st/-get remote "public" "status"))
         "reads do not disclose caller-provided data")
     (is (thrown-with-msg?
-         #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+         js/Error
          #"information-flow policy denies kotobase egress"
          (st/-put remote "public" "export" {:secret true})))
     (is (= 1 (count @calls)) "denied write never reaches XRPC")))
@@ -117,7 +117,7 @@
                                     (dissoc base :next-certificate-fingerprint)})]
     (is (= :ok (st/-get allowed "docs" "one")))
     (is (thrown-with-msg?
-         #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+         js/Error
          #"transport profile denies kotobase XRPC"
          (st/-get denied "docs" "one")))
     (is (= 1 @calls) "denied transport profile never invokes XRPC")))
@@ -138,7 +138,7 @@
                        :crypto-envelope e}))]
     (is (= :ok (st/-get (make-store envelope) "docs" "one")))
     (is (thrown-with-msg?
-         #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+         js/Error
          #"hybrid PQC policy denies"
          (st/-get (make-store (assoc envelope :envelope/algorithms [:x25519]))
                   "docs" "one")))
@@ -193,13 +193,13 @@
     (is (= 1 @calls))
     (is (= 1 (count @events)))
     (is (thrown-with-msg?
-         #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+         js/Error
          #"signed capability denies"
          (st/-get store "docs" "one"))
         "nonce replay is rejected before XRPC")
     (is (= 1 @calls))
     (is (thrown-with-msg?
-         #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+         js/Error
          #"hardware signing policy denies"
          (st/-get
           (kb/kotobase-store
@@ -248,7 +248,7 @@
                                            :approval/approver :alice)]))
                  (assoc base :max-request-bytes 1)
                  (dissoc base :request-size-fn)]]
-      (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+      (is (thrown? js/Error
                    (st/-get (kb/kotobase-store
                              (fn [_ _] (swap! calls inc) :bad) bad)
                             "docs" "one"))))
@@ -287,7 +287,7 @@
                  (assoc-in base [:restore-attestation :receipt/artifact-digest]
                            "sha256:other")]]
       (is (thrown-with-msg?
-           #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+           js/Error
            #"recovery readiness denies"
            (kb/kotobase-store (fn [_ _] :bad) bad))))))
 
@@ -304,7 +304,7 @@
     (is (= receipt (st/-transact s request)) "same tx-id is idempotent")
     (is (= 1 (count (st/-read s "events" 0))) "replay does not append twice")
     (is (thrown-with-msg?
-         #?(:clj clojure.lang.ExceptionInfo :cljs js/Error) #"revision conflict"
+         js/Error #"revision conflict"
          (st/-transact s {:tx-id "tx-2" :expected-revision 0
                           :puts [["docs" "c" 3]] :deletes [] :appends []})))
     (is (nil? (st/-get s "docs" "c")) "conflict applies nothing")))
@@ -340,13 +340,13 @@
         receipt (st/-transact s request)]
     (is (= 1 (:revision receipt)))
     (is (thrown-with-msg?
-         #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+         js/Error
          #"tx-id replay rejected"
          (st/-transact s request)))
     (is (= :kotobase.store/transaction-id-replay
            (:type (ex-data
                    (try (st/-transact s request)
-                        (catch #?(:clj clojure.lang.ExceptionInfo :cljs js/Error) e e))))))))
+                        (catch js/Error e e))))))))
 
 (deftest strict-idempotency-rejects-different-request
   (let [s (local/local-store {:strict-idempotency? true})
@@ -354,13 +354,13 @@
         request2 {:tx-id "tx-1" :expected-revision 1 :puts [["docs" "b" 2]] :deletes [] :appends []}]
     (st/-transact s request1)
     (is (thrown-with-msg?
-         #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+         js/Error
          #"tx-id replay rejected"
          (st/-transact s request2)))
     (is (= :kotobase.store/transaction-id-replay
            (:type (ex-data
                    (try (st/-transact s request2)
-                        (catch #?(:clj clojure.lang.ExceptionInfo :cljs js/Error) e e))))))))
+                        (catch js/Error e e))))))))
 
 (deftest non-strict-mode-allows-identical-replay
   (let [s (local/local-store)  ; default: strict-idempotency? false

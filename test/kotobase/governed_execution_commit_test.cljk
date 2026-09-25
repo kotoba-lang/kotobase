@@ -7,7 +7,7 @@
   written and can be read back from the commit it produced. Here the sink is
   `kotobase.causal-commit/execution-receipt-sink` over an in-memory store, and
   the receipt is re-read at an exact commit CID."
-  (:require [kotoba.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is testing]]
             [kotobase.causal-commit :as causal]
             [kotobase.core :as core]
             [kotobase.governed-execution :as governed]
@@ -35,7 +35,7 @@
         ack))))
 
 (defn- reason [f]
-  (let [data (ex-data (try (f) nil (catch clojure.lang.ExceptionInfo e e)))]
+  (let [data (ex-data (try (f) nil (catch kerror/ExceptionInfo e e)))]
     (or (:kotobase.governed-execution/reason data)
         (:kotobase.execution-contract/reason data)
         (:kotobase.causal-commit/reason data))))
@@ -66,7 +66,7 @@
                                      :authorize! denied
                                      :commit! (recording-sink db acks)))
                    nil
-                   (catch clojure.lang.ExceptionInfo e e))
+                   (catch kerror/ExceptionInfo e e))
         ack (first @acks)
         proof (causal/receipt-at db (:receipt/commit-cid ack) (:receipt/cid ack))
         receipt (first (:receipt/records proof))]

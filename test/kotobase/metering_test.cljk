@@ -6,7 +6,7 @@
   assertion here is either against a second, independent count taken inside
   the provider, or against a control where the work changes and the number has
   to move with it."
-  (:require [kotoba.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is testing]]
             [kotobase.core :as core]
             [kotobase.governed-read :as governed-read]
             [kotobase.governed-read-test :as fixture]
@@ -226,16 +226,16 @@
 (deftest a-profile-derived-from-meters-that-disagree-is-not-a-measurement
   ;; below cannot exceed above unless the two are not on the same path, and a
   ;; number derived from that is a guess wearing a measurement's clothes
-  (is (thrown? clojure.lang.ExceptionInfo
+  (is (thrown? kerror/ExceptionInfo
                (metering/cache-profile {:requests 1} {:requests 2})))
-  (is (thrown? clojure.lang.ExceptionInfo
+  (is (thrown? kerror/ExceptionInfo
                (metering/cache-profile {:requests nil} {:requests 0})))
-  (is (thrown? clojure.lang.ExceptionInfo (metering/tiered-span {:above nil})))
+  (is (thrown? kerror/ExceptionInfo (metering/tiered-span {:above nil})))
   (testing "a partial hit is neither cold nor hot"
     (is (= :warm (metering/cache-profile {:requests 4} {:requests 1})))))
 
 (deftest a-meter-refuses-what-it-cannot-measure
-  (is (thrown? clojure.lang.ExceptionInfo (metering/meter {})))
-  (is (thrown? clojure.lang.ExceptionInfo
+  (is (thrown? kerror/ExceptionInfo (metering/meter {})))
+  (is (thrown? kerror/ExceptionInfo
                (metering/span {:read (constantly {})} "cold")))
-  (is (thrown? clojure.lang.ExceptionInfo (metering/span {} :unmeasured))))
+  (is (thrown? kerror/ExceptionInfo (metering/span {} :unmeasured))))

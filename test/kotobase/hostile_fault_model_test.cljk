@@ -1,5 +1,5 @@
 (ns kotobase.hostile-fault-model-test
-  (:require [kotoba.test :refer [deftest is]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is]]
             [kotobase.local :as local]
             [kotobase.store :as store]))
 
@@ -56,7 +56,7 @@
         left-receipt (store/-transact db left)]
     (is (= 1 (:revision left-receipt)))
     (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo #"revision conflict"
+         kerror/ExceptionInfo #"revision conflict"
          (store/-transact db right)))
     (let [retried (assoc right :expected-revision 1)]
       (is (= 2 (:revision (store/-transact db retried))))
@@ -83,7 +83,7 @@
         original (request "same-id" 0 "a" 1)]
     (store/-transact db original)
     (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo #"tx-id reused"
+         kerror/ExceptionInfo #"tx-id reused"
          (store/-transact db (assoc original :puts [["docs" "a" 2]]))))
     (is (= 1 (store/-get db "docs" "a")))
     (is (= 1 (:revision
@@ -101,7 +101,7 @@
                 :puts (vec (repeat 1001 ["docs" "a" 1])))]
         db (local/local-store)]
     (doseq [bad bad-requests]
-      (is (thrown? clojure.lang.ExceptionInfo
+      (is (thrown? kerror/ExceptionInfo
                    (store/-transact db bad))))
     (is (= {:revision 0 :docs {} :streams {}}
            (store/-snapshot db {:collections ["docs"] :streams ["events"]})))))

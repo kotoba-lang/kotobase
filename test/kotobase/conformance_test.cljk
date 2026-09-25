@@ -6,7 +6,7 @@
   discriminates and not enough to claim cross-protocol agreement, and the
   namespace docstring says so. What is being tested is the comparison, so the
   interesting cases are the ones where it must refuse."
-  (:require [kotoba.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is testing]]
             [kotobase.conformance :as conformance]
             [kotobase.execution-identity :as id]
             [kotobase.governed-execution :as governed]
@@ -40,8 +40,7 @@
 
 (defn- reason [f]
   (:kotobase.conformance/reason
-   (ex-data (try (f) nil (catch #?(:clj clojure.lang.ExceptionInfo
-                                   :cljs ExceptionInfo) e e)))))
+   (ex-data (try (f) nil (catch kerror/ExceptionInfo e e)))))
 
 (defn- agreement [& frontends]
   (conformance/agree!
@@ -122,7 +121,7 @@
                                            :executions [one one]}))))))
   (testing "and a receipt that is not a valid receipt is not compared"
     (let [one (execute :index-scan index-scan)]
-      (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs ExceptionInfo)
+      (is (thrown? kerror/ExceptionInfo
                    (conformance/agree!
                     {:value-cid id/value-cid
                      :query fixture/query

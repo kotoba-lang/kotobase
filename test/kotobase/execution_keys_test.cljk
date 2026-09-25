@@ -1,5 +1,5 @@
 (ns kotobase.execution-keys-test
-  (:require [kotoba.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is testing]]
             [kotobase.execution-identity :as id]
             [kotobase.execution-keys :as keys]
             [kotobase.governed-execution :as governed]
@@ -46,8 +46,7 @@
 
 (defn- reason [f]
   (let [data (ex-data (try (f) nil
-                           (catch #?(:clj clojure.lang.ExceptionInfo
-                                     :cljs ExceptionInfo) e e)))]
+                           (catch kerror/ExceptionInfo e e)))]
     (or (:kotobase.execution-keys/reason data)
         (:kotobase.governed-execution/reason data))))
 

@@ -7,7 +7,7 @@
   second is the reason this namespace exists at all — deleting a path and its
   checks together would have been a regression wearing a consolidation's
   clothes."
-  (:require [kotoba.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is testing]]
             [kotobase.causal-commit :as causal]
             [kotobase.causal-trust-test :as trust-fixture]
             [kotobase.core :as core]
@@ -73,7 +73,7 @@
      overrides)))
 
 (defn- reason [f]
-  (let [data (ex-data (try (f) nil (catch clojure.lang.ExceptionInfo e e)))]
+  (let [data (ex-data (try (f) nil (catch kerror/ExceptionInfo e e)))]
     (or (:kotobase.governed-read/reason data)
         (:kotobase.authority-window/reason data)
         (:kotobase.governed-execution/reason data))))
