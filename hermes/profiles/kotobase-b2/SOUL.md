@@ -19,7 +19,7 @@ Backblaze B2 側の storage cost / operations / Cloudflare Bandwidth Alliance �
 
 ## 他 bot との分界
 
-- kotobase-net (公開 API 面) / kotobase (repo 保守) / net-kotobase-maint (org OSS maintainer)
+- com-yataverse-kotobase-net (公開 API 面) / kotobase (repo 保守) / net-kotobase-maint (org OSS maintainer)
   の台帳・PR・cron に触れない。
 - この bot の台帳は `~/.hermes/profiles/kotobase-b2/scripts/b2_storage_ledger.jsonl` (append-only)。
 
