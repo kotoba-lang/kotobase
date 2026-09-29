@@ -138,7 +138,7 @@
     (println "        the cross-reader agreement the receipt exists to provide."))
 
   (println "\n=== E. runtime reach — namespaces the deployed runtime cannot load ===")
-  (println "  CLAUDE.md ranks JVM last among runtimes. A boundary enforced only")
+  (println "  AGENTS.md ranks JVM last among runtimes. A boundary enforced only")
   (println "  in a .clj namespace is enforced where this service does not run.")
   (let [files (vec (.readdirSync fs "src/kotobase"))
         clj   (filterv #(str/ends-with? % ".clj") files)

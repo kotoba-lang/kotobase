@@ -54,7 +54,7 @@ no source to load:**
 
 `kotobase.execution-contract` is `.cljc` — the boundary measured above runs
 everywhere. The transparency log, which is the *public* half of the audit
-plane, does not. CLAUDE.md ranks JVM last among runtimes, so "the audit plane
+plane, does not. AGENTS.md ranks JVM last among runtimes, so "the audit plane
 exists" and "the audit plane runs where the service runs" are two claims and
 only the first is currently supported.
 
