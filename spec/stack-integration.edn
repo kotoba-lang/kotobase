@@ -1,0 +1,15 @@
+;; Composition metadata only; existing owner runtime contracts retain authority.
+{:stack.integration/version 1
+ :status :accepted-architecture-direction
+ :owner "kotoba-lang/kotobase"
+ :role "Persistent application data plane"
+ :composition-authority "https://github.com/kotoba-lang/kotoba-lang/blob/main/lang/stack-architecture.edn"
+ :architecture-direction "https://github.com/kotoba-lang/kotoba-lang/blob/main/lang/stack-architecture-target-neutral.edn"
+ :refactor-procedure "https://github.com/kotoba-lang/kotoba-lang/blob/main/docs/stack-refactor-procedure.md"
+ :intended-entrypoint-dependencies ["application/data protocol contracts" "neutral execution and storage contracts"]
+ :observed-base "e5d9cd2ec1fcf59bc48162532acfab75b1bf6050"
+ :observed-selected-direct ["abi" "grant"]
+ :aliases-recorded-separately true
+ :runtime-migration-performed false
+ :runtime-schema-changed false
+ :qualification-claim :none}
