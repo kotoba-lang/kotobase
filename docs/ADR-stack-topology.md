@@ -8,21 +8,39 @@ topology and the full cross-repo cleanup list live there.
 
 ## Position in the stack topology
 
-```
-kotoba    = language + datom model     ("Clojure")
-compiler  = AOT compiler               (foundation; depends on nothing in the stack)
-kototama  = Wasm tender runtime        (depends on: aiueos)
-aiueos    = capability OS / broker     (dependency-minimal)
-kotobase  = datom database (THIS REPO) ("Datomic")
+Updated 2026-10-10 against fetched main manifests. The
+[stack architecture](https://github.com/kotoba-lang/kotoba-lang/blob/main/docs/stack-architecture.md) and
+[composition contract](https://github.com/kotoba-lang/kotoba-lang/blob/main/lang/stack-architecture.edn) distinguish responsibility, library,
+artifact and runtime/service graphs.
+
+```text
+kotoba-lang = language contracts (T1)
+kotoba      = CLI, libraries and Codebase
+amu         = compiler and project linker (T2)
+abi         = shared execution contract (T0)
+kototama    = Lisp VM contract; engines implement it (T3)
+grant       = pure permission decisions (T4); authority owns scope/delegation
+aiueos      = operating system (T5); enforces grant's answer
+sahai       = reusable placement (T6); murakumo operates its own inference fleet
+kotobase    = database and persistent data plane
 ```
 
-**Invariant (already honored, now stated):** kotobase depends on kotoba,
-never the reverse — kotoba : kotobase = Clojure : Datomic (ADR-2607032500).
-Verified against deps.edn 2026-07-24: this repo's runtime deps are
-`security` only; the `kotoba` dependency appears solely in the
-`:integration` test alias. Keep it that way — the `IStore` seam and
-`LocalStore` stay zero-dep portable `.cljc`, and no kotobase repo may ever
-appear in `kotoba-lang/kotoba`'s (or the compiler's) dependency closure.
+AiueOS is the OS for a modern Kotoba Lisp machine in development; Kototama is
+its Lisp VM contract, also implemented by hosted engines. These are
+architectural roles, not completion/qualification claims.
+
+Library arrows mean consumer → dependency: Kotoba imports Amu and Kototama;
+Kototama imports grant and abi; AiueOS imports grant; grant imports authority
+and abi and does not import the OS. Amu imports contracts and multiple
+backends. Alias-only dependencies must be labelled separately.
+The booted kernel consumes verified compiler artifacts rather than linking
+the compiler. Host build/conformance aliases may import compiler libraries.
+The database/language boundary describes ownership, not a claim that every
+database runtime directly imports the Kotoba CLI.
+
+The July 2026 topology snapshot was corrected on 2026-10-10 after the grant
+split and VM-contract separation; its old dependency counts and “AiueOS
+decides” wording are not current invariants.
 
 ## Decision — converge the datom plane on the `kotobase-*` prefix
 
