@@ -39,7 +39,7 @@ V2 has the v1 keys plus `:merge-policy` and differs only in parents:
 |---|---|
 | `:format` | `"kotobase.logical-commit/v2"` |
 | `:merge-policy` | `"kotobase.merge/v1"` (closed; a new policy is a new value) |
-| `:parents` | 2..16 distinct CID strings, strictly ascending string order |
+| `:parents` | 2..16 distinct printable-ASCII CID strings, strictly ascending string order |
 | `:epoch` | `1 + max(parent epochs)` (= causal height, so > 0) |
 | `:tx-root` | root of the deterministic resolution transaction (section 3) |
 | `:logical-checkpoint-root` | root of the merged visible Datoms |
@@ -57,33 +57,56 @@ Decisions within this:
   accept bytes a signer did not sign.
 - ASCII multibase CIDs make string order equal CID byte order, matching the
   "canonical CID-byte parent order" already qualified by
-  `kotoba/cid_dag_traversal.kotoba`.
-- Fan-in is bounded at 16 because verifying a merge recomputes every parent's
-  closure.
+  `kotoba/cid_dag_traversal.kotoba`. `canonical-parents` rejects any parent
+  that is not printable ASCII, so no host can sort it differently.
+- Fan-in is bounded at 16. `merge` checks the distinct head count before it
+  walks any history.
 - `:merge-policy` is inside the signed value so a future policy change cannot
   reinterpret an old merge.
 - Schema-changing merges are out of scope: heads whose schema, model contract
-  or admission policy roots differ are rejected (`:incompatible-heads`).
+  or admission policy roots differ are rejected (`:incompatible-heads`). The
+  schema is applied to all of history, so every ancestor in the closure must
+  also carry the heads' `:schema-root` (`:incompatible-history`). This is a v1
+  limitation. Per-commit schemas need a schema per root and are an open gate.
 
 ### 2. Merge base via ancestor closure
 
-`closure(c) = {c} ∪ closure(parents(c))`. Every commit's epoch must equal
-`1 + max(parent epochs)`, which makes epoch the causal height and guarantees
-that `(epoch, CID)` is a linear extension of causality.
+`closure(c) = {c} ∪ closure(parents(c))`. The union closure of the heads is
+admissible only if all of these hold. Otherwise the merge fails closed:
+
+- every commit's root and `:tx-root` bind its bytes (`:root-mismatch`,
+  `:tx-root-mismatch`);
+- every commit has the heads' `:database-id` (`:database-mismatch`) and
+  `:schema-root` (`:incompatible-history`);
+- a parentless commit is at epoch 0, and every other commit is at exactly
+  `1 + max(parent epochs)` (`:invalid-epoch`). This makes epoch the causal
+  height, makes the graph acyclic, and makes `(epoch, CID)` a linear extension
+  of causality. A forged high-epoch genesis can no longer win every
+  last-writer-wins decision;
+- the closure has exactly one genesis (`:unrelated-histories`). So any two
+  heads share a common ancestor, and two unrelated databases that happen to
+  share a `:database-id` cannot be merged into one;
+- the walk visits at most `:max-closure` commits (default 100,000;
+  `:closure-too-large`), so an attacker-supplied graph cannot make the walk
+  unbounded.
 
 - `reduce-heads`: remove duplicates and every head that is in another head's
   closure. If one head remains, the result is `:fast-forward` to it and no
   commit is created. So `merge(A, A) = A` and `merge(M, ancestor) = M`.
-- `merge-bases`: the maximal elements of `∩ closure(head)`. A criss-cross has
-  more than one. The bases are reported. The Datom rule below is defined over
-  events and causality, so it needs no recursive "virtual base".
+- `merge-bases`: the maximal elements of `∩ closure(head)`. This set is never
+  empty because of the single genesis. A criss-cross has more than one base.
+  The bases are reported. The Datom rule below is defined over events and
+  causality, so it needs no recursive "virtual base".
 
 ### 3. Datom merge policy `kotobase.merge/v1`
 
 Every normalized transaction datom in `⋃ closure(head)` is an event stamped
 `[epoch commit-cid index]`. Event `x` happens before `y` if `x.commit` is a
 proper ancestor of `y.commit`, or if both are in the same commit and
-`x.index < y.index`.
+`x.index < y.index`. Datoms are identified by their canonical
+`kotobase.logical/v1` encoding, never by host equality. So `[1 2]` and
+`(1 2)` are different values in the merge exactly as they are in the
+checkpoint bytes, and a retraction of one never removes the other.
 
 **Principle:** causality decides whenever it can. The stamp order decides only
 between causally concurrent events that the schema says cannot coexist. Every
@@ -96,30 +119,45 @@ stamp decision is written as an explicit Datom into the merge commit.
    replacement). A Datom is visible if it has at least one live assertion. This
    is the set union of both sides' assertions and retractions since the merge
    base, with each retraction applying only to what its writer observed.
-2. **Retraction vs concurrent assertion.** If a visible Datom's live assertion
-   is concurrent with a retraction, and no live assertion has observed that
-   retraction since, the assertion wins (add-wins / OR-set). The merge
-   transaction re-asserts the Datom (`:op :assert`), so the decision is a
-   history event attributed to the merge commit. This rule uses no CID
-   tie-break.
+2. **Retraction vs concurrent assertion.** If a visible Datom has a
+   retraction that no later assertion of that Datom has observed, the live
+   assertion wins (add-wins / OR-set). The merge transaction re-asserts the
+   Datom (`:op :assert`), so the decision is a history event attributed to the
+   merge commit. This rule uses no CID tie-break. A re-assertion is *not* a
+   new write for ordering: it keeps the stamp of the newest live assertion it
+   preserves. Its causal position, which is the merge commit, only records
+   that the retraction was observed. Otherwise a merge would push an old
+   value ahead of writes made concurrently with the merge, and
+   `(A ∪ B) ∪ C` would differ from `A ∪ B ∪ C`.
 3. **Cardinality-one conflict.** If more than one value of `[e attr]` is still
    visible, the value whose newest live assertion has the greatest stamp wins:
    higher causal height first, then higher commit CID, then later tx index.
    Every losing value is retracted in the merge transaction.
-4. **`:db/unique` conflict.** This runs after step 3. If one `[attr v]` is held
-   by more than one entity, the entity whose earliest live assertion has the
-   smallest stamp keeps it: lower causal height first, then lower CID. Each
-   other holder's Datom is retracted in the merge transaction.
+4. **`:db/unique` conflict.** If one `[attr v]` is held by more than one
+   entity, the entity whose earliest live assertion has the smallest stamp
+   keeps it: lower causal height first, then lower CID. Each other holder's
+   Datom is retracted in the merge transaction. Steps 3 and 4 iterate to a
+   fixpoint. If an entity's cardinality-one winner loses its unique value, the
+   entity falls back to its next-ranked live value, and that value is checked
+   for uniqueness again. So an entity never loses every value because two
+   rules each took one. Exclusions only grow, and each unique value goes to
+   the earliest claim among the entities that still want it, so the fixpoint
+   is unique and order-independent.
 5. The **resolution transaction** contains only these decisions: retractions
    sorted canonically, then re-assertions sorted canonically. It holds no user
    intent. A writer who wants new facts adds a v1 commit on top of the merge.
 
-Steps 3 and 4 point in opposite directions on purpose. Both reproduce what a
-serial executor running commits in `(epoch, CID)` order would have done. For
-cardinality-one, the last write replaces earlier ones. For uniqueness, a later
-conflicting claim would have failed its uniqueness check, so the first claim
-stands. An offline writer therefore cannot take a unique identity value away
-from an entity that claimed it earlier.
+Steps 3 and 4 point in opposite directions on purpose. For cardinality-one,
+the last write replaces earlier ones. For uniqueness, the first claim stands,
+so an offline writer cannot take a unique value away from an entity that
+claimed it earlier. This is the rule for `:db.unique/value`, where a serial
+executor would have rejected the later claim. It is *not* what a serial
+executor does for `:db.unique/identity`: there, a later
+`[:db/add tempid attr v]` would upsert into the existing entity instead of
+failing. That would merge two entities, and an entity merge cannot be undone
+by retracting Datoms. `kotobase.merge/v1` therefore treats both kinds of
+uniqueness as first-claim-wins and never merges entities. Identity upsert
+across branches is an open gate.
 
 Conflicts are rejected per Datom, not per transaction. Rejecting a whole
 transaction would cascade to every later commit on that branch that depends on
@@ -130,33 +168,64 @@ Properties that follow by construction:
 - **Commutative:** the result depends only on the reduced head set, and parents
   are canonically sorted, so `merge(A, B)` and `merge(B, A)` give byte-identical
   CIDs.
+- **Associative per rule:** set union, observed-remove, cardinality-one LWW
+  and first-claim uniqueness each give the same visible state for
+  `(A ∪ B) ∪ C` and `A ∪ B ∪ C`. The one exception is the step 3/4 fallback.
+  If an intermediate merge has already retracted a cardinality-one loser, a
+  later merge cannot fall back to that value. In that one coupled case the
+  merge topology can matter. Every replica still computes the same result for
+  the same topology, so convergence is unaffected.
 - **Idempotent:** merging an ancestor is a fast-forward. A merge commit
   happens after every event it resolves, so later merges find those conflicts
   closed and do not record them again.
 - **Criss-cross convergent:** two independent merges of the same conflict pick
   the same winner, because the stamp does not depend on which writer merged.
   The final merge resolves only conflicts that are still open.
-- **Verifiable:** `verify-merge` recomputes a published v2 commit from its
-  parents and rejects it unless the bytes are identical. That includes a merge
-  with a dropped loser retraction, a wrong epoch, or a redundant ancestor
-  parent.
+- **Verifiable, recursively:** `merge`, `state` and `verify-merge` replay
+  the closure once in `(epoch, CID)` order. They recompute *every* v2 commit
+  they meet from its parents' states and reject it unless the bytes are
+  identical. That includes a merge with a dropped loser retraction, a wrong
+  epoch, or a redundant ancestor parent. A forged inner merge therefore
+  cannot be laundered by an honest outer merge. Each commit is verified once
+  per call.
 
 ### 4. Frontier: merge is descent, not equivocation
 
 `accept-head` keeps every v1 rule: rollback, same-epoch `:equivocation`,
-contiguous single-parent edges, path length = epoch distance. Merge commits
-change only these things:
+and contiguous single-parent edges, so an all-v1 path is exactly as long as
+the epoch distance. Merge commits change only these things:
 
-- A v2 proof edge is valid when the next path root is one of the merge's
-  parents and the merge's epoch is strictly greater. A merge edge may skip
-  epochs, because a merge sits at `1 + max(parents)` and the path may go
-  through a lower parent. The path-length equality check therefore applies
-  only to all-v1 paths.
+- A v2 proof entry must carry `:parent-entries`: one entry for *every*
+  parent, in canonical order. Each entry passes the injected
+  CID/signature `verify-entry`, and each must have the merge's
+  `:database-id`. The merge's epoch must be exactly `1 + max(parent epochs)`
+  (`:invalid-epoch`). An entry without `:parent-entries` is
+  `:invalid-proof`. So a merge over a nonexistent or unsigned parent, a merge
+  with an inflated epoch, and a merge with an understated epoch beside a
+  higher parent are all rejected.
+- The path may go through any one parent. That parent's declared entry must
+  agree with the next path entry (or with last-seen). Each edge is therefore
+  exact: +1 for v1, or the verified `1 + max(parents)` for v2. The epoch
+  distance is fully proven even though the path is shorter than the
+  distance.
+- The other parents' own ancestry is not part of a descent proof. One merge
+  edge may therefore skip at most `:max-epoch-skip` epochs (default 2^20,
+  `:epoch-skip-too-large`). This stops a single signed merge from pushing the
+  frontier to the safe-integer limit, which would leave honest successors
+  permanently at `:rollback`.
 - A different root at the last-seen epoch is still `:equivocation`. A merge
   commit whose parents include the last-seen root is at a higher epoch and
   descends from it, so it is `:advanced`, and the result carries
   `:merge-parents`. A client that saw A and then the equivocating B can accept
   `merge(A, B)` without a coordinator. A client that saw B can do the same.
+  Every merge on the path is reported as `:merges [{:root :parents}]`
+  (candidate first).
+- The frontier is a single-writer view. An honest concurrent sibling (two
+  writers committing offline) shows up as `:equivocation` at the same epoch
+  or `:not-descendant` at a higher epoch. In a single-writer database that is
+  evidence of misbehaviour. A multi-writer client treats it as "a merge is
+  needed": it keeps its frontier and computes or waits for `merge(A, B)`,
+  which then advances it. It never adopts the sibling directly.
 - Descent proof does not prove that the merge was computed correctly. A client
   that needs that runs `verify-merge` over the fetched closure.
 
@@ -166,9 +235,17 @@ change only these things:
   merge CID locally, and a mutable ref or CAS is only an optional
   availability hint.
 - Every non-causal decision is an auditable Datom in a signed commit.
-- The reference `merge` replays the full union closure to genesis and runs in
-  O(history). It is the specification and conformance oracle, not a
-  production algorithm.
+- The reference `merge` replays the full union closure to genesis once. A v1
+  commit costs O(|tx| · log n), because each commit's state is the parent's
+  persistent state plus that commit's events. A merge commit, whether met in
+  history or computed, costs O(|state|) to join its parents' observed-remove
+  sets. Cardinality-one / unique resolution adds O(|state|) per merge, plus
+  one more pass per cascading unique fallback. Total:
+  O(E log n + M · S), where E is events, M is merges and S is the visible
+  state size, bounded by `:max-closure`. The previous pairwise scans were
+  O(n²) on a hot attribute. A 4000-commit chain now costs about 4x a
+  1000-commit chain, not about 15x. This is still the specification and
+  conformance oracle, not a production algorithm.
 
 ## Not decided here / open gates
 
@@ -182,7 +259,11 @@ change only these things:
   trees for equal Datom sets.
 - Transport and discovery of sibling heads (gossip, IPNS, DNSLink): these are
   availability only and never truth.
-- Merges across schema changes, transaction functions that read state
-  (`:db.fn/cas` intent across branches), and tuple/composite uniqueness.
-- Verifying nested merges recursively inside `merge` (currently an earlier v2
-  commit's transaction is trusted as signed).
+- Merges across schema changes, including histories whose ancestors carry a
+  different `:schema-root` (currently rejected). Also transaction functions
+  that read state (`:db.fn/cas` intent across branches),
+  tuple/composite uniqueness, and `:db.unique/identity` upsert (entity merge)
+  across branches.
+- Proving the ancestry of a merge's non-path parents to a frontier client
+  (currently bounded by `:max-epoch-skip` and left to `verify-merge` over the
+  fetched closure).
