@@ -106,7 +106,9 @@ proper ancestor of `y.commit`, or if both are in the same commit and
 `x.index < y.index`. Datoms are identified by their canonical
 `kotobase.logical/v1` encoding, never by host equality. So `[1 2]` and
 `(1 2)` are different values in the merge exactly as they are in the
-checkpoint bytes, and a retraction of one never removes the other.
+checkpoint bytes, and a retraction of one never removes the other. The same
+holds for deduplicating loser retractions and for comparing a stored merge
+transaction in `verify-merge`.
 
 **Principle:** causality decides whenever it can. The stamp order decides only
 between causally concurrent events that the schema says cannot coexist. Every
@@ -168,13 +170,26 @@ Properties that follow by construction:
 - **Commutative:** the result depends only on the reduced head set, and parents
   are canonically sorted, so `merge(A, B)` and `merge(B, A)` give byte-identical
   CIDs.
-- **Associative per rule:** set union, observed-remove, cardinality-one LWW
-  and first-claim uniqueness each give the same visible state for
-  `(A ∪ B) ∪ C` and `A ∪ B ∪ C`. The one exception is the step 3/4 fallback.
-  If an intermediate merge has already retracted a cardinality-one loser, a
-  later merge cannot fall back to that value. In that one coupled case the
-  merge topology can matter. Every replica still computes the same result for
-  the same topology, so convergence is unaffected.
+- **Convergent for the same merge DAG, not associative in general:** the
+  result is a function of the commit DAG. Replicas that hold the same merge
+  commits compute the same state. A *different* merge order can give a
+  different state, because a merge's loser retraction is a permanent event.
+  `(A ∪ B) ∪ C` equals `A ∪ B ∪ C` only if no intermediate merge decided a
+  conflict whose winner another head concurrently removes, and no step 3/4
+  fallback is involved. "Removes" means a retraction, or a cardinality-one
+  replacement of the winning datom. Randomized testing of three-head merges
+  (about 1-3% of random histories) found no other kind of divergence. Counterexamples, pinned as tests
+  (`merge-order-is-deterministic-but-not-associative`):
+  - cardinality-one: `x` writes `w` (epoch 2), `y` writes `l` (epoch 1), and
+    `c` (after `x`) retracts `w`. `{x, y, c}` keeps `l`. `(x ∪ y) ∪ c` has
+    already retracted `l` for `w`, so `e` has no value.
+  - unique: genesis gives `h` to `e3`, `a` retracts it, and `b` gives `h` to
+    `e2`. `{a, b, c}` lets `e2` keep `h`. `a ∪ (b ∪ c)` has already retracted
+    `e2`'s claim in favour of `e3`, so nobody holds `h`.
+
+  Merge order is part of history. It is not an implementation detail that
+  replicas may choose freely. Writers that want the n-way result merge all
+  their heads in one merge commit (up to 16).
 - **Idempotent:** merging an ancestor is a fast-forward. A merge commit
   happens after every event it resolves, so later merges find those conflicts
   closed and do not record them again.
@@ -208,11 +223,14 @@ the epoch distance. Merge commits change only these things:
   exact: +1 for v1, or the verified `1 + max(parents)` for v2. The epoch
   distance is fully proven even though the path is shorter than the
   distance.
-- The other parents' own ancestry is not part of a descent proof. One merge
-  edge may therefore skip at most `:max-epoch-skip` epochs (default 2^20,
-  `:epoch-skip-too-large`). This stops a single signed merge from pushing the
-  frontier to the safe-integer limit, which would leave honest successors
-  permanently at `:rollback`.
+- The other parents' own ancestry is not part of a descent proof. The
+  *whole path* may therefore skip at most `:max-epoch-skip` epochs in total:
+  `distance ≤ path length + max-epoch-skip` (default 2^20,
+  `:epoch-skip-too-large`). This holds per edge and summed over all merges
+  on the path, so neither one signed merge nor a chain of them can push the
+  frontier to the safe-integer limit in one acceptance, which would leave
+  honest successors permanently at `:rollback`. A nil or negative bound is
+  rejected (`:invalid-option`).
 - A different root at the last-seen epoch is still `:equivocation`. A merge
   commit whose parents include the last-seen root is at a higher epoch and
   descends from it, so it is `:advanced`, and the result carries
@@ -226,8 +244,13 @@ the epoch distance. Merge commits change only these things:
   evidence of misbehaviour. A multi-writer client treats it as "a merge is
   needed": it keeps its frontier and computes or waits for `merge(A, B)`,
   which then advances it. It never adopts the sibling directly.
-- Descent proof does not prove that the merge was computed correctly. A client
-  that needs that runs `verify-merge` over the fetched closure.
+- Descent proof does not prove that the merge was computed correctly. Nor
+  does it prove that its other parents belong to the same history. A merge
+  whose other parent comes from an unrelated history that reuses the
+  `:database-id`, signed by an accepted key, is accepted by the frontier. A
+  client that reads state through a merge MUST run `verify-merge` over the
+  fetched closure, which rejects it (`:unrelated-histories`) and recomputes
+  every merge.
 
 ## Consequences
 
@@ -238,14 +261,34 @@ the epoch distance. Merge commits change only these things:
 - The reference `merge` replays the full union closure to genesis once. A v1
   commit costs O(|tx| · log n), because each commit's state is the parent's
   persistent state plus that commit's events. A merge commit, whether met in
-  history or computed, costs O(|state|) to join its parents' observed-remove
-  sets. Cardinality-one / unique resolution adds O(|state|) per merge, plus
-  one more pass per cascading unique fallback. Total:
-  O(E log n + M · S), where E is events, M is merges and S is the visible
-  state size, bounded by `:max-closure`. The previous pairwise scans were
-  O(n²) on a hot attribute. A 4000-commit chain now costs about 4x a
-  1000-commit chain, not about 15x. This is still the specification and
-  conformance oracle, not a production algorithm.
+  history or computed, costs:
+  - O(D log n) to join its parents and extend the closure set, where D is
+    the commits on either side of the join, outside the shared history, plus
+    their events. Only datoms that those commits touch are re-joined
+    (cardinality-one live sets per entity/attribute, because an assertion
+    replaces the other values). Everything else, including unobserved
+    retraction tombstones, is shared structurally;
+  - O(S log S) to resolve conflicts and recompute the checkpoint root, where
+    S is the visible state size. This term is inherent to the commit format,
+    because every v2 commit names a flat `:logical-checkpoint-root` over its
+    full state. Removing it needs an incremental (Merkle/Prolly) checkpoint
+    root, which is an open gate. Each distinct datom's canonical sort key and
+    checkpoint fragment are encoded once per replay. The checkpoint bytes are
+    assembled from those fragments and are byte-identical to
+    `checkpoint-string`, so a merge step does not re-encode its whole state.
+
+  Total: O(E log n + Σ D + M · S log S) for E events and M merges. The
+  `M · S` term is not linear: a long history of merges over a growing state
+  is quadratic. Two fail-closed bounds therefore apply. `:max-closure`
+  (default 100,000 commits) bounds the walk. `:max-work` (default 5,000,000
+  units) bounds the replay work, counting one unit per event and, per merge,
+  D plus the joined live-datom count (`:work-budget-exceeded`). Hot
+  attributes no longer cost O(n²): a 4000-commit chain costs about 4x a
+  1000-commit chain. With constant visible state, 1000 merges cost about 3-4x
+  250 merges (round-1 code: about 10x; 4000 merges took 3.7 s instead of
+  52 s). With growing state, the M · S term remains (150/300/600 merges:
+  0.55/1.7/7.2 s). This is still the specification and conformance oracle, not a
+  production algorithm.
 
 ## Not decided here / open gates
 
