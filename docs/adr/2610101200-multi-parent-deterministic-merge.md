@@ -142,9 +142,10 @@ stamp decision is written as an explicit Datom into the merge commit.
    fixpoint. If an entity's cardinality-one winner loses its unique value, the
    entity falls back to its next-ranked live value, and that value is checked
    for uniqueness again. So an entity never loses every value because two
-   rules each took one. Exclusions only grow, and each unique value goes to
-   the earliest claim among the entities that still want it, so the fixpoint
-   is unique and order-independent.
+   rules each took one. This is deferred acceptance (Gale-Shapley): entities
+   propose values in rank order, and each unique value keeps its earliest
+   claim. So the result does not depend on processing order. Each live datom
+   proposes at most once, so the fixpoint costs O(values) per merge.
 5. The **resolution transaction** contains only these decisions: retractions
    sorted canonically, then re-assertions sorted canonically. It holds no user
    intent. A writer who wants new facts adds a v1 commit on top of the merge.
@@ -178,7 +179,8 @@ Properties that follow by construction:
   conflict whose winner another head concurrently removes, and no step 3/4
   fallback is involved. "Removes" means a retraction, or a cardinality-one
   replacement of the winning datom. Randomized testing of three-head merges
-  (about 1-3% of random histories) found no other kind of divergence. Counterexamples, pinned as tests
+  (about 1-3% of random histories) found no other kind of divergence.
+  Counterexamples, pinned as tests
   (`merge-order-is-deterministic-but-not-associative`):
   - cardinality-one: `x` writes `w` (epoch 2), `y` writes `l` (epoch 1), and
     `c` (after `x`) retracts `w`. `{x, y, c}` keeps `l`. `(x ∪ y) ∪ c` has
@@ -262,14 +264,21 @@ the epoch distance. Merge commits change only these things:
   commit costs O(|tx| · log n), because each commit's state is the parent's
   persistent state plus that commit's events. A merge commit, whether met in
   history or computed, costs:
-  - O(D log n) to join its parents and extend the closure set, where D is
-    the commits on either side of the join, outside the shared history, plus
-    their events. Only datoms that those commits touch are re-joined
+  - O(D log n + T) to join its parents and extend the closure set. D is the
+    commits that one side has and the accumulated side lacks, plus their
+    events. Only datoms those commits touch are re-joined
     (cardinality-one live sets per entity/attribute, because an assertion
-    replaces the other values). Everything else, including unobserved
-    retraction tombstones, is shared structurally;
-  - O(S log S) to resolve conflicts and recompute the checkpoint root, where
-    S is the visible state size. This term is inherent to the commit format,
+    replaces the other values). T is the number of dots compared for those
+    datoms. A datom touched only on the accumulated side already holds the
+    joined value, so that side is not walked. Everything else, including
+    unobserved retraction tombstones, is shared structurally;
+  - O(S + K) to resolve conflicts. S is the live datom count and K the live
+    assertion-dot count. A datom keeps one dot per surviving assertion,
+    because concurrent retractions remove dots individually. Resolution takes
+    the max/min rank over all of them. Repeated assertions inside one
+    transaction collapse to one dot. The unique fixpoint adds O(S);
+  - O(S log S) to recompute the checkpoint root. This term is inherent to the
+    commit format,
     because every v2 commit names a flat `:logical-checkpoint-root` over its
     full state. Removing it needs an incremental (Merkle/Prolly) checkpoint
     root, which is an open gate. Each distinct datom's canonical sort key and
@@ -277,29 +286,45 @@ the epoch distance. Merge commits change only these things:
     assembled from those fragments and are byte-identical to
     `checkpoint-string`, so a merge step does not re-encode its whole state.
 
-  Total: O(E log n + Σ D + M · S log S) for E events and M merges. The
-  `M · S` term is not linear: a long history of merges over a growing state
-  is quadratic. Two fail-closed bounds therefore apply. `:max-closure`
-  (default 100,000 commits) bounds the walk. `:max-work` (default 5,000,000
-  units) bounds the replay work, counting one unit per event and, per merge,
-  D plus the joined live-datom count (`:work-budget-exceeded`). Hot
-  attributes no longer cost O(n²): a 4000-commit chain costs about 4x a
-  1000-commit chain. With constant visible state, 1000 merges cost about 3-4x
-  250 merges (round-1 code: about 10x; 4000 merges took 3.7 s instead of
-  52 s). With growing state, the M · S term remains (150/300/600 merges:
-  0.55/1.7/7.2 s). This is still the specification and conformance oracle, not a
-  production algorithm.
+  Total: O(E log n + Σ (D + T) + M · (S log S + K)) for E events and M
+  merges. The `M · S` term is not linear: a long history of merges over a
+  growing state is quadratic. Two fail-closed bounds therefore apply.
+  `:max-closure` (default 100,000 commits) bounds the walk. `:max-work`
+  (default 5,000,000 units; `:work-budget-exceeded`) bounds the replay work.
+  It charges one unit per event and, per merge step (verified or computed),
+  D + T + S + K plus the fixpoint's proposals. Every loop that scales with
+  the input is charged *before* or *as* it runs, so an attacker cannot buy
+  unbounded CPU with few units. Duplicate dots, cascading unique fallbacks
+  and retraction tombstones all count, or are not walked at all.
+
+  Sizing: S + K per merge dominates. 5,000,000 units is about 300 merges at
+  16,000 live datoms, or about 5,000 merges at 1,000. A larger database
+  raises `:max-work` explicitly or, better, starts the replay from a trusted
+  checkpoint. Both the checkpoint/snapshot start and the incremental
+  checkpoint root are open gates below.
+
+  Measured: a 4000-commit chain costs about 4x a 1000-commit chain. With
+  constant visible state, 1000 merges cost about 4x 250 merges in work units
+  (round-1 code took about 10x the time; 4000 merges took 3.7 s instead of
+  52 s). 100,000 duplicate assertions in one transaction now add their 10^5
+  events once instead of once per merge. A unique cascade of 2,000 fallbacks
+  costs O(k) (3.3 s, where round-based re-choosing took 13.4 s). With
+  growing state, the M · S term remains (150/300/600 merges: 0.55/1.7/7.2 s).
+  This is still the specification and conformance oracle, not a production
+  algorithm.
 
 ## Not decided here / open gates
 
-- Bounded or incremental merge from a checkpoint state at the merge bases
-  (needed at scale; must equal the reference result), and its Kotoba
+- Bounded or incremental merge from a trusted checkpoint/snapshot state at
+  the merge bases, and an incremental (Merkle/Prolly) checkpoint root. These
+  remove the `M · S` term and the default `:max-work` sizing limit. They are
+  needed at scale and must equal the reference result. They also need Kotoba
   native/Wasm qualification alongside the existing DAG fixtures.
 - Wiring into `kotobase-engine`. `commit-at!` writes kotobase-peer
   `{state, prev, seq}` chain commits with a single `prev`. A `merge-at!` needs
   multi-parent physical commits in kotobase-peer plus a v2 publication. The
-  physical root may be rebuilt from the merged Datoms; Prolly gives CID-identical
-  trees for equal Datom sets.
+  physical root may be rebuilt from the merged Datoms; Prolly gives
+  CID-identical trees for equal Datom sets.
 - Transport and discovery of sibling heads (gossip, IPNS, DNSLink): these are
   availability only and never truth.
 - Merges across schema changes, including histories whose ancestors carry a
