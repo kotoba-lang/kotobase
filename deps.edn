@@ -39,13 +39,13 @@
        io.github.kotoba-lang/security {:git/url "https://github.com/kotoba-lang/security.git"
                                         :git/sha "b4ff9d8a56263030bc92539b101e1eeb2dbfce39"}
         io.github.kotoba-lang/abi {:git/url "https://github.com/kotoba-lang/abi.git"
-                                   :git/sha "32ee84b2efc92478c846629c8d8319280eed506c"}
+                                   :git/sha "4dd0b7b9898cec5432bbe60c2904c1546e5f524a"}
         io.github.kotoba-lang/identity
         {:git/url "https://github.com/kotoba-lang/identity.git"
          :git/sha "6e4a07eaf44e3dbebfb4b340fd4f11448490f71f"}
         io.github.kotoba-lang/grant
         {:git/url "https://github.com/kotoba-lang/grant.git"
-         :git/sha "9d7d11fc3d77b1f6dfcbcd6fa9dd7d83e6b8bf98"}
+         :git/sha "557142a5592a08dac274c9b4a5c83cc509ffa103"}
         ;; The transitive arrangement/prolly path still names eec3ee8, whose
         ;; reader-conditional ns form is not valid under the real
         ;; ClojureScript compiler. Keep the Worker build on the fleet's
