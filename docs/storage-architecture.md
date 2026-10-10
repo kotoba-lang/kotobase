@@ -6,7 +6,9 @@ For the official `kotobase.net` and `kotoba-lang/kotobase` route, canonical
 truth is the caller-selected, signed immutable CID commit DAG. Reads require an
 explicit commit CID or canonical frontier; writes return a new commit CID and
 concurrent writes branch before deterministic merge. No mutable ref is required
-for correctness.
+for correctness. The merge commit format, merge-base rule, Datom conflict
+policy, and frontier treatment are fixed by
+`docs/adr/2610101200-multi-parent-deterministic-merge.md`.
 
 Cloudflare Durable Objects, D1, PostgreSQL, and Rust MUST NOT enter that
 canonical read, write, merge, recovery, query, build, or CI path. S3-compatible
