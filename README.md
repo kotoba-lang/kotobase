@@ -499,3 +499,14 @@ kbb -M:test     # LocalStore + KotobaseStore both satisfy the IStore contract
 kbb -M:cljs-test -m cljs.main -co '{:target :nodejs :output-to "target/p2-tests.js" :output-dir "target/p2-out" :optimizations :none :main kotobase.async-test-runner}' -c kotobase.async-test-runner
 node target/p2-tests.js              # real Promise causal-commit/guarded path
 ```
+
+## Target-neutral and distributed stack architecture
+
+Persists immutable blocks, facts, signed actions and query projections. Content identity, mutable naming, authority, discovery and transport are separate coordinates. Merkle links change parent identity; action overlays preserve referenced objects while advancing history. Ordered shared-state operations declare an inga/domain consensus contract; ordinary replication is not global finality.
+
+See the [owner integration guide and dependency direction](docs/stack-architecture.md),
+[composition metadata](spec/stack-integration.edn), and
+[whole-stack refactor procedure](https://github.com/kotoba-lang/kotoba-lang/blob/main/docs/stack-refactor-procedure.md).
+The direction is adopted; runtime contract migration and qualification remain
+explicit, separately verified work. Tier labels are responsibility axes, not
+a single dependency ranking.
