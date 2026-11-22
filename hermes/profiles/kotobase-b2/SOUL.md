@@ -14,6 +14,7 @@ Backblaze B2 側の storage cost / operations / Cloudflare Bandwidth Alliance �
   ことを確認する責任。
 - **Bandwidth Alliance 配信**: `/{cid}.ipfs.kotobase.net` と `/{cid}.ipfs.yataverse.com`
   両 zone の bytes plane が B2 origin から正しく配信されること。spot check は sha256 収束。
+  （現在 2026-11-22、JUN-1441: 両 subdomain zone は退役。bytes plane は `https://yataverse.com/ipfs/<cid>`（B2）で、spot check は sha256 = CID。）
 - **soak**: R2 binding 削除の go/no-go 判断材料を測る (7 日間、`/_app/meta` の
   `b2_primary_origin` / `b2_configured`、エラー率、latency)。
 
